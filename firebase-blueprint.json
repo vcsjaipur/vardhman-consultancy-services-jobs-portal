@@ -1,0 +1,612 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account and profile data isolated per authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "description": "Portal role for the user",
+          "enum": ["candidate", "employer", "admin"]
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name or contact person name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Normalized lowercase email address",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Normalized 10-digit mobile number or empty string",
+          "maxLength": 20
+        },
+        "city": {
+          "type": "string",
+          "description": "City of residence or office",
+          "maxLength": 120
+        },
+        "experience": {
+          "type": "string",
+          "description": "Experience range",
+          "maxLength": 80
+        },
+        "companyName": {
+          "type": "string",
+          "description": "Employer company name if applicable",
+          "maxLength": 160
+        },
+        "resumeFileName": {
+          "type": "string",
+          "description": "Uploaded resume file name",
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated"
+        }
+      },
+      "required": ["uid", "role", "name", "email", "createdAt"]
+    },
+    "EmployerJob": {
+      "title": "EmployerJob",
+      "description": "Full confidential employer job requirement posted via Employer/Resume Desk.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique job ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "employerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the employer or admin poster",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "company": {
+          "type": "string",
+          "description": "Actual hiring company name",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "companyMasked": {
+          "type": "string",
+          "description": "Public masked label",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "recruiterName": {
+          "type": "string",
+          "description": "Recruiter or contact person name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "recruiterEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Official recruiter email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "recruiterPhone": {
+          "type": "string",
+          "description": "Recruiter contact phone",
+          "maxLength": 30
+        },
+        "title": {
+          "type": "string",
+          "description": "Job title",
+          "minLength": 2,
+          "maxLength": 180
+        },
+        "designation": {
+          "type": "string",
+          "description": "Job designation or level",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "location": {
+          "type": "string",
+          "description": "Job location",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "experience": {
+          "type": "string",
+          "description": "Experience range",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "salary": {
+          "type": "string",
+          "description": "Salary package range",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "jobType": {
+          "type": "string",
+          "description": "Employment type",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "skills": {
+          "type": "array",
+          "description": "List of required skills (max 30)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Complete job description",
+          "minLength": 5,
+          "maxLength": 10000
+        },
+        "qualification": {
+          "type": "string",
+          "description": "Required qualification",
+          "maxLength": 200
+        },
+        "openings": {
+          "type": "number",
+          "description": "Number of open positions"
+        },
+        "lastDateToApply": {
+          "type": "string",
+          "description": "Application deadline date",
+          "minLength": 4,
+          "maxLength": 40
+        },
+        "postedAt": {
+          "type": "string",
+          "description": "Formatted post date label",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "description": "Approval workflow status",
+          "enum": ["Pending", "Approved", "Rejected"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update"
+        }
+      },
+      "required": [
+        "id",
+        "employerUid",
+        "title",
+        "location",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublicJob": {
+      "title": "PublicJob",
+      "description": "Publicly queryable approved job listing with zero PII.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique job ID matching /jobs/{jobId}",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "employerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the employer or admin",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "companyMasked": {
+          "type": "string",
+          "description": "Confidential company display label",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "description": "Job title",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "designation": {
+          "type": "string",
+          "description": "Job designation",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "location": {
+          "type": "string",
+          "description": "Job location",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "experience": {
+          "type": "string",
+          "description": "Experience requirement",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "salary": {
+          "type": "string",
+          "description": "Salary package range",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "jobType": {
+          "type": "string",
+          "description": "Work type",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "skills": {
+          "type": "array",
+          "description": "Required skills list (max 30)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Public job description",
+          "maxLength": 10000
+        },
+        "qualification": {
+          "type": "string",
+          "description": "Qualification requirement",
+          "maxLength": 200
+        },
+        "openings": {
+          "type": "number",
+          "description": "Number of openings"
+        },
+        "lastDateToApply": {
+          "type": "string",
+          "description": "Last date to apply",
+          "maxLength": 40
+        },
+        "postedAt": {
+          "type": "string",
+          "description": "Formatted post date",
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "description": "Public approval state",
+          "enum": ["Approved"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of publication"
+        }
+      },
+      "required": [
+        "id",
+        "employerUid",
+        "title",
+        "location",
+        "status",
+        "createdAt"
+      ]
+    },
+    "JobApplication": {
+      "title": "JobApplication",
+      "description": "Candidate job application persisted in Firestore and linked to /public_jobs/{jobId}.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique application ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "candidateUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the applying candidate",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "employerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the job's employer",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Referenced approved job ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobTitle": {
+          "type": "string",
+          "description": "Applied job title",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "companyMasked": {
+          "type": "string",
+          "description": "Confidential company display label",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "location": {
+          "type": "string",
+          "description": "Job location",
+          "maxLength": 140
+        },
+        "salary": {
+          "type": "string",
+          "description": "Job salary",
+          "maxLength": 80
+        },
+        "experience": {
+          "type": "string",
+          "description": "Experience requirement",
+          "maxLength": 80
+        },
+        "applicantName": {
+          "type": "string",
+          "description": "Candidate full name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "applicantEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Candidate official email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "applicantPhone": {
+          "type": "string",
+          "description": "Candidate phone number",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "resumeId": {
+          "type": "string",
+          "description": "Resume document ID",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "resumeFileName": {
+          "type": "string",
+          "description": "Resume file name",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "status": {
+          "type": "string",
+          "description": "Application status",
+          "enum": ["Submitted"]
+        },
+        "appliedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of submission"
+        }
+      },
+      "required": [
+        "id",
+        "candidateUid",
+        "jobId",
+        "jobTitle",
+        "companyMasked",
+        "applicantName",
+        "applicantEmail",
+        "applicantPhone",
+        "resumeId",
+        "resumeFileName",
+        "status",
+        "appliedAt"
+      ]
+    },
+    "PortalJobSettings": {
+      "title": "PortalJobSettings",
+      "description": "Admin-controlled job publishing mode (Pending approval vs Auto-Approve).",
+      "type": "object",
+      "properties": {
+        "autoApprove": {
+          "type": "boolean",
+          "description": "When true, newly posted jobs publish immediately without pending review"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "Admin UID that last updated the setting",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of setting update"
+        }
+      },
+      "required": ["autoApprove", "updatedByUid", "updatedAt"]
+    },
+    "ResumeGodamEntry": {
+      "title": "ResumeGodamEntry",
+      "description": "Complete portal candidate application and PDF resume stored in Resume Godam.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique Resume Godam entry ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "candidateUid": {
+          "type": "string",
+          "description": "Optional Firebase Auth UID if submitted while signed in",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Applied job ID or general_resume",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobTitle": {
+          "type": "string",
+          "description": "Applied job title or post",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "companyMasked": {
+          "type": "string",
+          "description": "Confidential company display label",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "applicantName": {
+          "type": "string",
+          "description": "Candidate full name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "applicantEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Candidate email address",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "applicantPhone": {
+          "type": "string",
+          "description": "Candidate mobile number",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "city": {
+          "type": "string",
+          "description": "Candidate city",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "qualificationExperience": {
+          "type": "string",
+          "description": "Candidate qualification and experience details",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "resumeSummary": {
+          "type": "string",
+          "description": "Optional candidate skills or experience summary",
+          "maxLength": 2000
+        },
+        "resumeFileName": {
+          "type": "string",
+          "description": "Uploaded PDF resume filename",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "resumeFileType": {
+          "type": "string",
+          "description": "Uploaded resume file type",
+          "enum": ["pdf"]
+        },
+        "resumeBase64": {
+          "type": "string",
+          "description": "Base64-encoded PDF resume data",
+          "minLength": 1,
+          "maxLength": 800000
+        },
+        "termsAccepted": {
+          "type": "boolean",
+          "description": "Confirmation that candidate accepted Job Secure Terms & Conditions"
+        },
+        "status": {
+          "type": "string",
+          "description": "Application status",
+          "enum": ["Submitted"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of submission"
+        }
+      },
+      "required": [
+        "id",
+        "jobId",
+        "jobTitle",
+        "companyMasked",
+        "applicantName",
+        "applicantEmail",
+        "applicantPhone",
+        "city",
+        "qualificationExperience",
+        "resumeFileName",
+        "resumeFileType",
+        "resumeBase64",
+        "termsAccepted",
+        "status",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles isolated strictly to owner and admin."
+    },
+    "/jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/EmployerJob" },
+      "description": "Full confidential employer job mandates visible only to the posting employer and admin."
+    },
+    "/public_jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/PublicJob" },
+      "description": "Approved public jobs shown on the Vardhman Consultancy Services portal with pagination."
+    },
+    "/applications/{applicationId}": {
+      "schema": { "$ref": "#/entities/JobApplication" },
+      "description": "Candidate job applications visible to applicant, hiring employer, and admin."
+    },
+    "/portal_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PortalJobSettings" },
+      "description": "Admin-managed job workflow settings including Auto-Approve toggle."
+    },
+    "/resume_godam/{entryId}": {
+      "schema": { "$ref": "#/entities/ResumeGodamEntry" },
+      "description": "Complete portal-submitted candidate applications and PDF resumes readable only by Admin or submitting candidate."
+    }
+  }
+}
