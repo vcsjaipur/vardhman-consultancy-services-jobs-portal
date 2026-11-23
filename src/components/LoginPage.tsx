@@ -31,6 +31,7 @@ import {
 } from '../utils/candidateApi';
 import { syncUserProfileToFirestore } from '../utils/firestorePortal';
 import { toFriendlyPortalError } from '../utils/jobHelpers';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 interface LoginPageProps {
   portalRole?: UserRole;
@@ -207,7 +208,9 @@ export function LoginPage({
       const res = await sendAuthOtp(targetToUse, 'login');
       setOtpSentForLogin(true);
       setOtpLoginNotice(
-        `OTP sent to ${res.targetDisplay}. Verification Code: ${res.verificationCode}`
+        res.verificationCode
+          ? `OTP generated for ${res.targetDisplay}. Verification Code: ${res.verificationCode}`
+          : `OTP sent immediately to ${res.targetDisplay}. Please check your email inbox (valid for 30 minutes).`
       );
     } catch (err) {
       if (err instanceof ApiRequestError && (err.status === 404 || err.code === 'NOT_REGISTERED')) {
@@ -296,7 +299,9 @@ export function LoginPage({
     try {
       const res = await sendAuthOtp(resetTarget.trim(), 'reset');
       setResetNotice(
-        `OTP sent to ${res.targetDisplay}. Verification Code: ${res.verificationCode}`
+        res.verificationCode
+          ? `OTP generated for ${res.targetDisplay}. Verification Code: ${res.verificationCode}`
+          : `OTP sent immediately to ${res.targetDisplay}. Please check your email inbox (valid for 30 minutes).`
       );
       setResetStep(2);
     } catch (err) {
@@ -316,7 +321,7 @@ export function LoginPage({
     setIsBusy(true);
     try {
       await verifyAuthOtp(resetTarget.trim(), resetOtp.trim(), 'reset');
-      setResetNotice('OTP verified! Please set your new Password and 4-Digit PIN below.');
+      setResetNotice('OTP verified! Please set your new Password below (4-Digit PIN is optional).');
       setResetStep(3);
     } catch (err) {
       setError(toFriendlyPortalError(err, 'Incorrect OTP.'));
@@ -336,13 +341,16 @@ export function LoginPage({
       setError('New password and Confirm password do not match.');
       return;
     }
-    if (!/^\d{4}$/.test(newPin)) {
-      setError('New PIN must be exactly 4 digits.');
-      return;
-    }
-    if (newPin !== confirmNewPin) {
-      setError('New PIN and Confirm PIN do not match.');
-      return;
+    const cleanNewPin = newPin.trim();
+    if (cleanNewPin) {
+      if (!/^\d{4}$/.test(cleanNewPin)) {
+        setError('New PIN must be exactly 4 digits (or leave blank).');
+        return;
+      }
+      if (cleanNewPin !== confirmNewPin.trim()) {
+        setError('New PIN and Confirm PIN do not match.');
+        return;
+      }
     }
     setIsBusy(true);
     try {
@@ -350,7 +358,7 @@ export function LoginPage({
         target: resetTarget.trim(),
         otp: resetOtp.trim(),
         newPassword,
-        newPin,
+        ...(cleanNewPin ? { newPin: cleanNewPin } : {}),
       });
       setResetStep(4);
     } catch (err) {
@@ -361,6 +369,11 @@ export function LoginPage({
   };
 
   const exitResetToLogin = () => {
+    const recoveredIdentifier = resetTarget.trim();
+    if (recoveredIdentifier) {
+      setPwdIdentifier(recoveredIdentifier);
+      setActiveTab('password');
+    }
     setShowResetFlow(false);
     setResetStep(1);
     setResetTarget('');
@@ -401,18 +414,59 @@ export function LoginPage({
 
         <div className="mt-5 bg-white border border-slate-200/90 rounded-2xl shadow-xl overflow-hidden">
           <div className="bg-gradient-to-r from-[#063B7A] to-[#042A58] px-5 sm:px-8 py-6 text-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
+              {portalRole !== 'admin' && (
+                <div className="inline-flex rounded-lg bg-white/10 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.location.hash = '#login';
+                    }}
+                    className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                      portalRole === 'candidate'
+                        ? 'bg-white text-[#063B7A]'
+                        : 'text-white/85 hover:text-white'
+                    }`}
+                  >
+                    Candidate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.location.hash = '#/employer-login';
+                    }}
+                    className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                      portalRole === 'employer'
+                        ? 'bg-white text-[#063B7A]'
+                        : 'text-white/85 hover:text-white'
+                    }`}
+                  >
+                    Company / Employer
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs sm:text-sm font-semibold text-[#F58220]">
-                Vardhman Consultancy Services · Est. 2012
+                JobsNia.com · Vardhman Consultancy Services
               </p>
               <p className="text-[11px] sm:text-xs text-slate-200 whitespace-nowrap">
-                info@vardhmanconsultancy.com | Mobile &amp; WhatsApp: 7877250630
+                info@vardhmanconsultancy.com
               </p>
             </div>
 
             <h1 className="mt-1.5 font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               {showResetFlow
-                ? 'Forgot / Reset Password + PIN'
+                ? 'Forgot / Reset Password'
                 : portalRole === 'employer'
                   ? 'Employer Login'
                   : portalRole === 'admin'
@@ -421,7 +475,7 @@ export function LoginPage({
             </h1>
             <p className="mt-2 text-sm text-slate-200 leading-relaxed">
               {showResetFlow
-                ? 'Verify your registered Email or Mobile via OTP to set a new Password and 4-Digit PIN.'
+                ? 'Verify your registered Email or Mobile via OTP to set a new Password (and optional 4-Digit PIN).'
                 : portalRole === 'employer'
                   ? 'Sign in to your Employer Dashboard to submit confidential job mandates & complete JDs.'
                   : portalRole === 'admin'
@@ -560,7 +614,7 @@ export function LoginPage({
                         ? 'Send OTP'
                         : resetStep === 2
                           ? 'Verify OTP'
-                          : 'Set New Password & PIN'}
+                          : 'Set New Password'}
                     </span>
                   </div>
                 )}
@@ -706,7 +760,7 @@ export function LoginPage({
                           htmlFor="reset-new-pin"
                           className="block text-xs font-semibold text-[#063B7A] mb-1.5"
                         >
-                          Create New PIN (4-Digit) *
+                          New 4-Digit PIN (Optional)
                         </label>
                         <div className="relative flex items-center">
                           <input
@@ -718,7 +772,7 @@ export function LoginPage({
                             onChange={(e) =>
                               setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))
                             }
-                            placeholder="4-digit PIN"
+                            placeholder="Optional 4-digit PIN"
                             className="w-full min-h-[46px] pl-3.5 pr-11 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#063B7A] focus:outline-none tabular-nums"
                           />
                           <button
@@ -737,7 +791,7 @@ export function LoginPage({
                           htmlFor="reset-confirm-pin"
                           className="block text-xs font-semibold text-[#063B7A] mb-1.5"
                         >
-                          Confirm New PIN *
+                          Confirm New PIN (Optional)
                         </label>
                         <input
                           id="reset-confirm-pin"
@@ -765,7 +819,7 @@ export function LoginPage({
                       disabled={isBusy}
                       className="w-full min-h-[48px] px-6 py-3 rounded-xl bg-gradient-to-r from-[#063B7A] to-[#042A58] text-white font-semibold text-sm shadow-md cursor-pointer"
                     >
-                      {isBusy ? 'Saving...' : 'Reset Password & PIN'}
+                      {isBusy ? 'Saving...' : 'Save New Password'}
                     </button>
                   </form>
                 )}
@@ -777,10 +831,10 @@ export function LoginPage({
                     </div>
                     <div>
                       <h2 className="font-display text-xl font-bold text-[#063B7A]">
-                        Password &amp; PIN Updated Successfully
+                        Password Updated Successfully
                       </h2>
                       <p className="mt-1.5 text-sm text-slate-600">
-                        You can now sign in using your updated Password or 4-Digit PIN.
+                        You can now log in immediately using your new Password.
                       </p>
                     </div>
                     <button

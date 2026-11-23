@@ -43,6 +43,7 @@ export interface JobListing {
 
 export type PortalPageView =
   | 'home'
+  | 'about-us'
   | 'search-jobs'
   | 'job-details'
   | 'register'
@@ -276,6 +277,59 @@ export interface EmailDispatchSummary {
   deliveredVia: 'smtp' | 'queued';
   environmentMode?: 'published-domain' | 'dev-gmail';
   createdAt: string;
+}
+
+export interface SearchSuggestionItem {
+  value: string;
+  label: string;
+  category: 'Recent' | 'Live Jobs' | 'Popular' | 'AI';
+  matchCount?: number;
+}
+
+export interface AiCareerCopilotRecommendation {
+  jobId: string;
+  fitScore: number;
+  reason: string;
+}
+
+export interface AiCareerCopilotResponse {
+  summary: string;
+  recommendations: AiCareerCopilotRecommendation[];
+  suggestedFilters: {
+    keyword: string;
+    location: string;
+    experience: string;
+  };
+  suggestedQueries: string[];
+}
+
+export interface AiCoverLetterResponse {
+  subjectLine: string;
+  coverNote: string;
+  pitchHighlights: string[];
+}
+
+export interface JobAlertPreviewJob {
+  id: string;
+  title: string;
+  location: string;
+  salary: string;
+}
+
+export interface JobAlertSubscriberSummary {
+  id: string;
+  name: string;
+  email: string;
+  city: string;
+  category: string;
+  createdAt: string;
+}
+
+export interface AdminJobAlertsOverview {
+  subscribers: JobAlertSubscriberSummary[];
+  subscribersCount: number;
+  optedInCandidatesCount: number;
+  totalAlertsSent: number;
 }
 
 export interface JobApplication {

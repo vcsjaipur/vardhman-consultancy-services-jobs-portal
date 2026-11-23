@@ -11,7 +11,7 @@ export const VCS_TERMS_DOCUMENT = {
   applicability:
     'Applicable to Every Candidate / Every Job Seeker - Common for All Levels',
   intro:
-    'By submitting your resume through Email, WhatsApp, Portal or Website, you agree to:',
+    'By submitting your resume through Email, Portal or Website, you agree to:',
   items: [
     {
       number: 1,
@@ -26,12 +26,12 @@ export const VCS_TERMS_DOCUMENT = {
     {
       number: 3,
       title: 'INTERVIEW FEEDBACK',
-      body: 'You are requested to share your interview feedback on the same day of interview via WhatsApp and Email on info@vardhmanconsultancy.com. Feedback must include interview date, company name, interviewer name and outcome. Your feedback helps us to support you better for next opportunities.',
+      body: 'You are requested to share your interview feedback on the same day of interview via Email on info@vardhmanconsultancy.com. Feedback must include interview date, company name, interviewer name and outcome. Your feedback helps us to support you better for next opportunities.',
     },
     {
       number: 4,
       title: 'JOINING INFORMATION',
-      body: 'If selected, kindly inform us within 24 hours and share a copy of Offer Letter / Appointment Letter / CTC on WhatsApp and Email info@vardhmanconsultancy.com. Sharing your success with us helps us to serve you and other candidates better.',
+      body: 'If selected, kindly inform us within 24 hours and share a copy of Offer Letter / Appointment Letter / CTC on Email info@vardhmanconsultancy.com. Sharing your success with us helps us to serve you and other candidates better.',
     },
     {
       number: 5,

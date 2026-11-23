@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ArrowRight,
   BarChart3,
+  Bell,
   Bookmark,
   Briefcase,
   Building2,
@@ -9,6 +10,7 @@ import {
   MapPin,
   RotateCcw,
   Send,
+  Sparkles,
 } from 'lucide-react';
 import {
   CandidateProfile,
@@ -35,6 +37,8 @@ interface LiveJobsSectionProps {
   onFilterByKeyword: (keyword: string) => void;
   onNavigateSearchJobs: () => void;
   onOpenModal: (modal: PortalModalType) => void;
+  onOpenAiCopilot?: () => void;
+  onOpenJobAlerts?: () => void;
 }
 
 const SPECIALTY_FILTERS = [
@@ -61,6 +65,8 @@ export function LiveJobsSection({
   onFilterByKeyword,
   onNavigateSearchJobs,
   onOpenModal,
+  onOpenAiCopilot,
+  onOpenJobAlerts,
 }: LiveJobsSectionProps) {
   const [viewTab, setViewTab] = useState<'all' | 'saved'>('all');
   const [showTrends, setShowTrends] = useState(false);
@@ -154,10 +160,32 @@ export function LiveJobsSection({
               <span>Job Trends</span>
             </button>
 
+            {onOpenAiCopilot && (
+              <button
+                type="button"
+                onClick={onOpenAiCopilot}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-[#F6D574] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>AI Job Finder</span>
+              </button>
+            )}
+
+            {onOpenJobAlerts && (
+              <button
+                type="button"
+                onClick={onOpenJobAlerts}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#0A8E43] bg-[#0A8E43]/8 hover:bg-[#0A8E43] text-[#0A8E43] hover:text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Job Alerts</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onNavigateSearchJobs}
-              className="min-h-[40px] px-4 py-2 rounded-xl border border-[#062856]/30 hover:border-[#062856] text-[#062856] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer"
+              className="min-h-[40px] px-4 py-2 rounded-xl border border-[#062856]/30 hover:border-[#062856] text-[#062856] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <span>Advanced Search</span>
               <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />

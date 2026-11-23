@@ -14,8 +14,8 @@ interface InterviewTip {
   number: string;
   englishTitle: string;
   englishDesc: string;
-  hindiTitle: string;
-  hindiDesc: string;
+  actionTitle: string;
+  actionDesc: string;
   accent: 'blue' | 'orange' | 'green';
 }
 
@@ -24,100 +24,100 @@ const INTERVIEW_TIPS: InterviewTip[] = [
     number: '01',
     englishTitle: 'Dress Clean & Professional',
     englishDesc:
-      'Wear neat, well-ironed formal or clean smart attire suitable for the job role.',
-    hindiTitle: 'साफ और प्रोफेशनल कपड़े पहनें',
-    hindiDesc:
-      'इंटरव्यू के लिए साफ, प्रेस किए हुए फॉर्मल या शालीन कपड़े पहनकर जाएं।',
+      'Wear neat, well-ironed formal or smart business attire suitable for the industry and role.',
+    actionTitle: 'Key Action Step: Prepare Your Attire a Day Early',
+    actionDesc:
+      'Select and press your interview outfit the evening before so you arrive composed and confident.',
     accent: 'blue',
   },
   {
     number: '02',
-    englishTitle: 'Reach On Time',
+    englishTitle: 'Arrive Punctually',
     englishDesc:
-      'Arrive 15 minutes before your scheduled interview time or join online calls 5 minutes early.',
-    hindiTitle: 'समय से पहले पहुंचें',
-    hindiDesc:
-      'तय समय से 15 मिनट पहले पहुंचें या ऑनलाइन इंटरव्यू में 5 मिनट पहले जुड़ें।',
+      'Reach the venue 15 minutes before your scheduled interview time, or join virtual interviews 5 minutes early.',
+    actionTitle: 'Key Action Step: Verify Route or Meeting Link',
+    actionDesc:
+      'Confirm the office address, contact desk, or video call link and internet stability well ahead of schedule.',
     accent: 'orange',
   },
   {
     number: '03',
-    englishTitle: 'Carry Printed Resume & Documents',
+    englishTitle: 'Carry Printed Resume & Credentials',
     englishDesc:
-      'Keep 2–3 printed copies of your updated resume, ID proof, and education certificates ready.',
-    hindiTitle: 'अपना रिज्यूमे और डॉक्यूमेंट साथ रखें',
-    hindiDesc:
-      'अपने अपडेटेड रिज्यूमे की 2–3 कॉपी, पहचान पत्र और सर्टिफिकेट फाइल में रखें।',
+      'Keep 2 to 3 printed copies of your updated resume, valid government ID proof, and academic certificates organized.',
+    actionTitle: 'Key Action Step: Organize an Interview Portfolio',
+    actionDesc:
+      'Place all documents in a clean folder and keep a digital PDF copy accessible on your phone.',
     accent: 'green',
   },
   {
     number: '04',
-    englishTitle: 'Speak Confidently & Clearly',
+    englishTitle: 'Speak Clearly & Professionally',
     englishDesc:
-      'Maintain a calm voice, speak clearly at a steady pace, and answer honestly.',
-    hindiTitle: 'आत्मविश्वास और स्पष्टता से बात करें',
-    hindiDesc:
-      'शांत और साफ आवाज में बात करें, जल्दबाजी न करें और ईमानदारी से जवाब दें।',
+      'Maintain a calm, composed tone, articulate clearly at a steady pace, and respond with integrity.',
+    actionTitle: 'Key Action Step: Structure Your Introduction',
+    actionDesc:
+      'Prepare a concise 60-second overview covering your background, core strengths, and career goals.',
     accent: 'blue',
   },
   {
     number: '05',
-    englishTitle: 'Know About The Company',
+    englishTitle: 'Research the Organization',
     englishDesc:
-      'Read about the company profile, products, services, and the job description before going.',
-    hindiTitle: 'कंपनी के बारे में जानकारी पढ़ें',
-    hindiDesc:
-      'इंटरव्यू से पहले कंपनी क्या काम करती है और आपकी जॉब रोल क्या है, यह जरूर पढ़ें।',
+      'Review the employer profile, products, services, therapeutic focus, and key job responsibilities beforehand.',
+    actionTitle: 'Key Action Step: Align Skills to the Role',
+    actionDesc:
+      'Identify three ways your past achievements directly support the objectives listed in the job description.',
     accent: 'orange',
   },
   {
     number: '06',
-    englishTitle: 'Listen Carefully Before Answering',
+    englishTitle: 'Listen Attentively Before Answering',
     englishDesc:
-      'Let the interviewer finish the question completely, pause briefly, and give a focused answer.',
-    hindiTitle: 'सवाल ध्यान से सुनें, फिर जवाब दें',
-    hindiDesc:
-      'इंटरव्यू लेने वाले की बात पूरी सुनें, एक पल सोचें और फिर सटीक जवाब दें।',
+      'Allow the interviewer to finish each question completely, pause thoughtfully, and deliver a focused response.',
+    actionTitle: 'Key Action Step: Stay Concise & Relevant',
+    actionDesc:
+      'Address the exact question first using specific results before sharing supporting context.',
     accent: 'green',
   },
   {
     number: '07',
-    englishTitle: 'Maintain Positive Body Language',
+    englishTitle: 'Maintain Confident Body Language',
     englishDesc:
-      'Greet with a polite smile, sit straight, and keep natural eye contact while speaking.',
-    hindiTitle: 'सकारात्मक बॉडी लैंग्वेज रखें',
-    hindiDesc:
-      'मुस्कान के साथ अभिवादन करें, सीधे बैठें और बात करते समय नजर मिलाकर बात करें।',
+      'Greet the panel courteously, maintain upright posture, and keep natural, respectful eye contact.',
+    actionTitle: 'Key Action Step: Project Calm Professionalism',
+    actionDesc:
+      'Stay composed throughout the discussion, nodding attentively while interviewers explain role expectations.',
     accent: 'blue',
   },
   {
     number: '08',
-    englishTitle: 'Highlight Your Skills & Experience',
+    englishTitle: 'Highlight Measurable Experience & Skills',
     englishDesc:
-      'Share real examples of past work, achievements, or college projects that match the job.',
-    hindiTitle: 'अपनी स्किल्स और अनुभव सही से बताएं',
-    hindiDesc:
-      'अपने पिछले काम, अनुभव या प्रोजेक्ट के उदाहरण बताएं जो इस नौकरी से मेल खाते हों।',
+      'Share concrete examples of past responsibilities, territory growth, operational wins, or academic projects.',
+    actionTitle: 'Key Action Step: Use Result-Driven Examples',
+    actionDesc:
+      'Describe the situation, your specific action, and the measurable outcome achieved.',
     accent: 'orange',
   },
   {
     number: '09',
-    englishTitle: 'Ask Thoughtful Questions',
+    englishTitle: 'Ask Informed Questions',
     englishDesc:
-      'At the end, ask polite questions about daily responsibilities, team structure, or growth.',
-    hindiTitle: 'इंटरव्यू के अंत में सही सवाल पूछें',
-    hindiDesc:
-      'अंत में काम की जिम्मेदारियों, टीम और आगे बढ़ने के अवसरों के बारे में विनम्र सवाल पूछें।',
+      'At the conclusion of the interview, ask thoughtful questions about role deliverables, team structure, and growth.',
+    actionTitle: 'Key Action Step: Demonstrate Long-Term Interest',
+    actionDesc:
+      'Ask what key milestones the hiring manager expects in the first 90 days of joining.',
     accent: 'green',
   },
   {
     number: '10',
-    englishTitle: 'Say Thank You Politely',
+    englishTitle: 'Follow Up Professionally & Share Feedback',
     englishDesc:
-      'Thank the interviewer for their time before leaving and keep your phone reachable for updates.',
-    hindiTitle: 'धन्यवाद कहें और फोन चालू रखें',
-    hindiDesc:
-      'इंटरव्यू खत्म होने पर धन्यवाद कहें और रिजल्ट या कॉल के लिए अपना फोन चालू रखें।',
+      'Thank the interviewer courteously before leaving, keep your phone reachable, and share same-day interview feedback.',
+    actionTitle: 'Key Action Step: Update JobsNia / VCS Promptly',
+    actionDesc:
+      'Send your interview outcome and feedback on the same day to info@vardhmanconsultancy.com for seamless coordination.',
     accent: 'blue',
   },
 ];
@@ -167,7 +167,7 @@ export function InterviewTipsPage({
       setCoachResult(res);
     } catch (err) {
       setCoachError(
-        err instanceof Error ? err.message : 'Unable to generate interview prep right now.'
+        err instanceof Error ? err.message : 'Unable to generate interview guide right now.'
       );
     } finally {
       setCoachLoading(false);
@@ -195,26 +195,26 @@ export function InterviewTipsPage({
 
           <div className="mt-5 max-w-3xl">
             <p className="text-xs sm:text-sm font-semibold text-[#F58220]">
-              Vardhman Consultancy Services · Candidate Career Guide
+              JobsNia.com · Vardhman Consultancy Services Candidate Guide
             </p>
             <h1 className="mt-1.5 font-display text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight text-balance">
-              10 Interview Tips (Hindi + English)
+              10 Essential Interview Preparation Tips
             </h1>
             <p className="mt-2 text-sm sm:text-base text-slate-200 leading-relaxed">
-              Simple, practical preparation steps in English and Hindi to help you succeed in every interview.
+              Clear, structured best practices to help you perform with poise and confidence in every corporate or clinical interview.
             </p>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-8">
-        {/* AI Personalized Interview Coach */}
+        {/* Role-Specific Interview Coach */}
         <section className="bg-white border border-slate-200 rounded-2xl shadow-md p-5 sm:p-7 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-[#F58220] flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4" aria-hidden="true" />
-                <span>AI Interview Coach (English + Hindi)</span>
+                <span>Smart Interview Preparation Coach</span>
               </p>
               <h2 className="mt-0.5 font-display text-lg sm:text-xl font-bold text-[#063B7A]">
                 Get Role-Specific Interview Questions &amp; Preparation Guide
@@ -247,7 +247,7 @@ export function InterviewTipsPage({
               ) : (
                 <Sparkles className="w-4 h-4 text-[#F58220]" />
               )}
-              <span>{coachLoading ? 'Preparing...' : 'Generate AI Guide'}</span>
+              <span>{coachLoading ? 'Preparing...' : 'Generate Prep Guide'}</span>
             </button>
           </form>
 
@@ -315,11 +315,11 @@ export function InterviewTipsPage({
                   </p>
 
                   <div className="mt-4 pt-3.5 border-t border-slate-100 bg-slate-50/70 -mx-2 px-3 py-2.5 rounded-xl">
-                    <p className="text-sm sm:text-base font-bold text-[#063B7A]">
-                      {tip.hindiTitle}
+                    <p className="text-sm font-bold text-[#063B7A]">
+                      {tip.actionTitle}
                     </p>
                     <p className="mt-1 text-sm text-slate-600 leading-relaxed">
-                      {tip.hindiDesc}
+                      {tip.actionDesc}
                     </p>
                   </div>
                 </div>
@@ -367,4 +367,3 @@ export function InterviewTipsPage({
     </div>
   );
 }
-

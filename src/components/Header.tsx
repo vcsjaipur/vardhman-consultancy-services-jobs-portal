@@ -6,7 +6,9 @@ import {
   LogIn,
   LogOut,
   Menu,
+  MessageSquare,
   PlusCircle,
+  ShieldCheck,
   User,
   UserCheck,
   X,
@@ -18,6 +20,7 @@ interface HeaderProps {
   candidate: CandidateProfile | null;
   onNavigateHome: () => void;
   onNavigateJobs: () => void;
+  onNavigateAbout?: () => void;
   onNavigateServices: () => void;
   onNavigateSearchJobs: () => void;
   onNavigateVcsInsights: () => void;
@@ -38,18 +41,21 @@ interface HeaderProps {
   onOpenModal: (modal: PortalModalType) => void;
 }
 
-export const LOGO_SRC = '/assets/aistudio/Vardhman_consultancy_services_logo_cad2eabb.jpg';
+export const LOGO_SRC = '/assets/aistudio/IMG-20261121-WA1566_67b18474.jpg';
+export const PORTAL_BRAND_LOGO_SRC = '/assets/aistudio/IMG-20261121-WA1566_67b18474.jpg';
 
 export function Header({
   currentPage = 'home',
   candidate,
   onNavigateHome,
   onNavigateJobs,
+  onNavigateAbout,
   onNavigateServices,
   onNavigateLogin,
   onNavigateEmployerLogin,
   onNavigateDashboard,
   onPostJobAction,
+  onNavigateContactUs,
   onLogout,
 }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -74,8 +80,8 @@ export function Header({
       <div className="h-[3px] w-full bg-gradient-to-r from-[#062856] via-[#D4AF37] to-[#062856]" aria-hidden="true" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-4 h-16 sm:h-[72px]">
-          {/* Header Left: Vardhman Logo | Jobs | Services */}
+        <div className="flex items-center justify-between gap-4 min-h-[82px] sm:min-h-[96px] lg:min-h-[104px] py-1.5">
+          {/* Header Left: JobsNia.com Logo | Jobs | Services */}
           <div className="flex items-center gap-5 sm:gap-7 min-w-0">
             <a
               href="#top"
@@ -85,19 +91,20 @@ export function Header({
                 onNavigateHome();
               }}
               className="flex items-center shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-lg"
-              aria-label="Vardhman Consultancy Services Home"
+              aria-label="JobsNia.com — By Vardhman Consultancy Services Home"
             >
               {!logoError ? (
                 <img
-                  src={LOGO_SRC}
-                  alt="Vardhman Consultancy Services"
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
                   referrerPolicy="no-referrer"
+                  decoding="sync"
                   onError={() => setLogoError(true)}
-                  className="h-11 sm:h-13 w-auto object-contain"
+                  className="h-[72px] sm:h-[88px] lg:h-[96px] w-auto object-contain select-none"
                 />
               ) : (
                 <span className="font-display font-bold text-base sm:text-lg text-[#062856] whitespace-nowrap">
-                  Vardhman Consultancy
+                  JobsNia.com
                 </span>
               )}
             </a>
@@ -117,10 +124,34 @@ export function Header({
 
               <button
                 type="button"
+                onClick={onNavigateAbout || onNavigateServices}
+                className={`px-3 py-2 text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-t-sm ${
+                  currentPage === 'about-us'
+                    ? 'text-[#062856] border-[#D4AF37]'
+                    : 'text-slate-600 hover:text-[#062856] border-transparent hover:border-[#D4AF37]'
+                }`}
+              >
+                About
+              </button>
+
+              <button
+                type="button"
                 onClick={onNavigateServices}
                 className="px-3 py-2 text-sm font-semibold text-slate-600 hover:text-[#062856] transition-colors whitespace-nowrap cursor-pointer border-b-2 border-transparent hover:border-[#D4AF37] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-t-sm"
               >
                 Services
+              </button>
+
+              <button
+                type="button"
+                onClick={onNavigateContactUs}
+                className={`px-3 py-2 text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-t-sm ${
+                  currentPage === 'contact-us'
+                    ? 'text-[#062856] border-[#D4AF37]'
+                    : 'text-slate-600 hover:text-[#062856] border-transparent hover:border-[#D4AF37]'
+                }`}
+              >
+                Contact
               </button>
 
               {isJobSeekerLoggedIn && (
@@ -249,11 +280,29 @@ export function Header({
 
               <button
                 type="button"
+                onClick={() => handleMobileItemClick(onNavigateAbout || onNavigateServices)}
+                className="min-h-[44px] px-3.5 py-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-[#062856] font-semibold text-sm flex items-center gap-2 cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4 text-[#9A6F04]" aria-hidden="true" />
+                <span>About</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleMobileItemClick(onNavigateServices)}
                 className="min-h-[44px] px-3.5 py-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-[#062856] font-semibold text-sm flex items-center gap-2 cursor-pointer"
               >
                 <Layers className="w-4 h-4 text-[#9A6F04]" aria-hidden="true" />
                 <span>Services</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleMobileItemClick(onNavigateContactUs)}
+                className="min-h-[44px] px-3.5 py-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-[#062856] font-semibold text-sm flex items-center gap-2 cursor-pointer"
+              >
+                <MessageSquare className="w-4 h-4 text-[#9A6F04]" aria-hidden="true" />
+                <span>Contact</span>
               </button>
             </div>
 

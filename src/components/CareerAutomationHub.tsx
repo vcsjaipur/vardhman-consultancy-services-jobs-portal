@@ -7,9 +7,7 @@ import {
   CalendarPlus,
   CheckCircle2,
   Clock,
-  ExternalLink,
   Mail,
-  MessageCircle,
   Play,
   Plus,
   Rocket,
@@ -135,12 +133,6 @@ export function CareerAutomationHub({
   const [emailNotifications, setEmailNotifications] = useState(
     candidate.emailNotificationsEnabled ?? true
   );
-  const [whatsappAlerts, setWhatsappAlerts] = useState(
-    candidate.whatsappAlertsEnabled ?? false
-  );
-  const [whatsappNumber, setWhatsappNumber] = useState(
-    candidate.whatsappNumber || candidate.phone || ''
-  );
   const [alertCity, setAlertCity] = useState(
     candidate.alertCity || candidate.preferredLocation || candidate.city || ''
   );
@@ -199,8 +191,6 @@ export function CareerAutomationHub({
 
   useEffect(() => {
     setEmailNotifications(candidate.emailNotificationsEnabled ?? true);
-    setWhatsappAlerts(candidate.whatsappAlertsEnabled ?? false);
-    setWhatsappNumber(candidate.whatsappNumber || candidate.phone || '');
     setAlertCity(candidate.alertCity || candidate.preferredLocation || candidate.city || '');
     setAlertCategory(candidate.alertCategory || candidate.preferredRole || 'Pharmaceutical');
     setAutoApplyEnabled(candidate.autoApplyConfig?.enabled ?? false);
@@ -240,8 +230,6 @@ export function CareerAutomationHub({
     try {
       const res = await updateCandidatePreferences({
         emailNotificationsEnabled: emailNotifications,
-        whatsappAlertsEnabled: whatsappAlerts,
-        whatsappNumber: whatsappNumber.trim(),
         alertCity: alertCity.trim(),
         alertCategory,
         autoApplyConfig: {
@@ -502,10 +490,6 @@ export function CareerAutomationHub({
   const skillResults = candidate.skillTestResults || [];
   const reminders = candidate.interviewReminders || [];
 
-  const whatsappOptInHref = `https://wa.me/917877250630?text=${encodeURIComponent(
-    `Hello Vardhman Consultancy Services, please activate WhatsApp Job Alerts for ${candidate.name} (${whatsappNumber || candidate.phone}). Preferred Category: ${alertCategory}, City: ${alertCity || candidate.city}.`
-  )}`;
-
   return (
     <section
       id="dashboard-automation-hub"
@@ -529,7 +513,7 @@ export function CareerAutomationHub({
             <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
               {[
                 { id: 'smart-match', label: 'Smart Match & Auto-Apply', icon: Rocket },
-                { id: 'alerts', label: 'WhatsApp & Email Alerts', icon: Bell },
+                { id: 'alerts', label: 'Email Job Alerts', icon: Bell },
                 { id: 'skill-tests', label: `Skill Tests (${skillResults.length})`, icon: Award },
                 {
                   id: 'reminders',
@@ -786,69 +770,33 @@ export function CareerAutomationHub({
             </div>
           )}
 
-          {/* TAB 2: WhatsApp & Email Alerts */}
+          {/* TAB 2: Email Job Alerts */}
           {activeTab === 'alerts' && (
             <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               <div className="lg:col-span-7 bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
                 <h3 className="font-display text-base font-bold text-[#063B7A]">
-                  Notification Channels &amp; Preferences
+                  Email Notification &amp; Job Alert Preferences
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-3 cursor-pointer">
-                    <div>
-                      <span className="font-bold text-sm text-[#063B7A] flex items-center gap-1.5">
-                        <Mail className="w-4 h-4 text-[#063B7A]" />
-                        <span>Email Notifications</span>
-                      </span>
-                      <span className="mt-1 block text-xs text-slate-600">
-                        Receive job alerts, interview reminders, auto-apply digests, and skill reports at {candidate.email}.
-                      </span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={emailNotifications}
-                      onChange={(e) => setEmailNotifications(e.target.checked)}
-                      className="mt-1 rounded border-slate-300 text-[#0A8E43] focus:ring-[#0A8E43]"
-                    />
-                  </label>
-
-                  <label className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-3 cursor-pointer">
-                    <div>
-                      <span className="font-bold text-sm text-[#0A8E43] flex items-center gap-1.5">
-                        <MessageCircle className="w-4 h-4 text-[#0A8E43]" />
-                        <span>WhatsApp Job Alerts</span>
-                      </span>
-                      <span className="mt-1 block text-xs text-slate-600">
-                        Receive instant WhatsApp mandate alerts matching your city and role category.
-                      </span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={whatsappAlerts}
-                      onChange={(e) => setWhatsappAlerts(e.target.checked)}
-                      className="mt-1 rounded border-slate-300 text-[#0A8E43] focus:ring-[#0A8E43]"
-                    />
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="p-4 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-3 cursor-pointer">
                   <div>
-                    <label
-                      htmlFor="hub-wa-number"
-                      className="block text-xs font-semibold text-[#063B7A] mb-1"
-                    >
-                      WhatsApp Number
-                    </label>
-                    <input
-                      id="hub-wa-number"
-                      type="tel"
-                      value={whatsappNumber}
-                      onChange={(e) => setWhatsappNumber(e.target.value)}
-                      placeholder="10-digit WhatsApp number"
-                      className="w-full min-h-[42px] px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:border-[#063B7A] focus:outline-none tabular-nums"
-                    />
+                    <span className="font-bold text-sm text-[#063B7A] flex items-center gap-1.5">
+                      <Mail className="w-4 h-4 text-[#063B7A]" />
+                      <span>Email Notifications</span>
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-600">
+                      Receive job alerts, interview reminders, auto-apply digests, and skill reports at {candidate.email}.
+                    </span>
                   </div>
+                  <input
+                    type="checkbox"
+                    checked={emailNotifications}
+                    onChange={(e) => setEmailNotifications(e.target.checked)}
+                    className="mt-1 rounded border-slate-300 text-[#0A8E43] focus:ring-[#0A8E43]"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label
                       htmlFor="hub-alert-city"
@@ -909,25 +857,22 @@ export function CareerAutomationHub({
                 </div>
               </div>
 
-              <div className="lg:col-span-5 bg-gradient-to-br from-[#0A8E43] to-[#077235] text-white rounded-2xl p-5 sm:p-6 space-y-4">
+              <div className="lg:col-span-5 bg-gradient-to-br from-[#063B7A] to-[#042A58] text-white rounded-2xl p-5 sm:p-6 space-y-4">
                 <div className="flex items-center gap-2.5">
-                  <MessageCircle className="w-6 h-6 shrink-0" aria-hidden="true" />
+                  <Mail className="w-6 h-6 text-[#F58220] shrink-0" aria-hidden="true" />
                   <h3 className="font-display text-lg font-bold">
-                    Official VCS WhatsApp Alert Desk
+                    Official VCS Portal &amp; Email Desk
                   </h3>
                 </div>
                 <p className="text-sm text-white/90 leading-relaxed">
-                  Click below to start a WhatsApp alert thread directly with the Vardhman Consultancy Services placement desk (+91 78772 50630) for instant verified mandates in {alertCity || candidate.city || 'India'}.
+                  All matching openings in {alertCity || candidate.city || 'India'} ({alertCategory}) are delivered directly to your portal dashboard and registered email inbox ({candidate.email}).
                 </p>
                 <a
-                  href={whatsappOptInHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-white text-[#077235] hover:bg-slate-100 text-sm font-bold inline-flex items-center justify-center gap-2 shadow-sm transition-colors"
+                  href="mailto:info@vardhmanconsultancy.com"
+                  className="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-white text-[#063B7A] hover:bg-slate-100 text-sm font-bold inline-flex items-center justify-center gap-2 shadow-sm transition-colors"
                 >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>Activate on WhatsApp Now</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <Mail className="w-4 h-4 text-[#0A8E43]" />
+                  <span>info@vardhmanconsultancy.com</span>
                 </a>
               </div>
             </div>
@@ -1185,16 +1130,13 @@ export function CareerAutomationHub({
                       No interview reminders scheduled
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Add your upcoming interview date &amp; time on the left to get Calendar (.ics), Email, Browser, and WhatsApp reminders.
+                      Add your upcoming interview date &amp; time on the left to get Calendar (.ics), Email, and Browser reminders.
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {reminders.map((rem) => {
                       const tag = getReminderTimingTag(rem.interviewDate, rem.status);
-                      const waSelfHref = `https://wa.me/?text=${encodeURIComponent(
-                        `Interview Reminder: ${rem.jobTitle} (${rem.companyName}) on ${rem.interviewDate} at ${rem.interviewTime} (${rem.mode}). Location/Link: ${rem.locationOrLink}`
-                      )}`;
 
                       return (
                         <div
@@ -1283,16 +1225,6 @@ export function CareerAutomationHub({
                                 {notifyingId === rem.id ? 'Sending...' : 'Email Reminder Now'}
                               </span>
                             </button>
-
-                            <a
-                              href={waSelfHref}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-3 py-1.5 rounded-lg bg-[#0A8E43]/10 hover:bg-[#0A8E43]/20 text-xs font-semibold text-[#0A8E43] inline-flex items-center gap-1"
-                            >
-                              <MessageCircle className="w-3.5 h-3.5" />
-                              <span>WhatsApp Self-Reminder</span>
-                            </a>
                           </div>
                         </div>
                       );

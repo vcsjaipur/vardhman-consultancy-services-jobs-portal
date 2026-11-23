@@ -1959,15 +1959,6 @@ export function DashboardPage({
                       className="text-[#063B7A] font-semibold hover:underline"
                     >
                       info@vardhmanconsultancy.com
-                    </a>{' '}
-                    or Mobile &amp; WhatsApp:{' '}
-                    <a
-                      href="https://wa.me/917877250630"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[#063B7A] font-semibold hover:underline tabular-nums"
-                    >
-                      7877250630
                     </a>
                     .
                   </p>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Mail, MessageCircle, Share2, X } from 'lucide-react';
+import { Check, Copy, Mail, Share2, X } from 'lucide-react';
 
 interface SocialShareMenuProps {
   title: string;
@@ -43,12 +43,6 @@ export function SocialShareMenu({
   const encodedTitle = encodeURIComponent(title);
 
   const shareChannels = [
-    {
-      name: 'WhatsApp',
-      href: `https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`,
-      badge: 'WA',
-      color: 'text-[#0A8E43] bg-[#0A8E43]/10 hover:bg-[#0A8E43]/18',
-    },
     {
       name: 'LinkedIn',
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
@@ -205,9 +199,7 @@ export function SocialShareMenu({
                 onClick={() => setOpen(false)}
                 className={`px-2.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-2 transition-colors ${ch.color}`}
               >
-                {ch.name === 'WhatsApp' ? (
-                  <MessageCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                ) : ch.name === 'Email' ? (
+                {ch.name === 'Email' ? (
                   <Mail className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 ) : (
                   <span className="w-4 h-4 rounded text-[10px] font-extrabold bg-white/80 flex items-center justify-center shrink-0">

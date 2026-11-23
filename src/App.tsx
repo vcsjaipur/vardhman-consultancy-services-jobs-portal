@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { auth, ensureVerifiedGoogleUser } from './firebase';
+import { AboutUsPage } from './components/AboutUsPage';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
 import { ApplyJobModal } from './components/ApplyJobModal';
 import { BuildResumePage } from './components/BuildResumePage';
@@ -24,6 +25,7 @@ import { SearchJobsPage } from './components/SearchJobsPage';
 import { SkillTestModal } from './components/SkillTestModal';
 import { VcsInsightsPage } from './components/VcsInsightsPage';
 import { WhyChooseSection } from './components/WhyChooseSection';
+import { OfflineBanner } from './components/OfflineBanner';
 import {
   CandidateProfile,
   CongratulationsContext,
@@ -49,6 +51,7 @@ import {
   fetchEmployerJobs,
   fetchInsightPosts,
   fetchMyApplications,
+  getCachedCandidateProfile,
   getStoredToken,
   loginWithGoogleToken,
   saveCandidateSearchHistory,
@@ -76,12 +79,21 @@ import {
 } from './utils/firestorePortal';
 import {
   fetchSharedActiveJobs,
+  fetchSharedCompanyRequirements,
   fetchSharedJobById,
   fetchSharedResumeGodamEntries,
+  SharedCompanyRequirementRecord,
   startSharedAutoSyncDaemon,
   subscribeSharedActiveJobs,
+  subscribeSharedCompanyRequirements,
   subscribeSharedResumeGodamEntries,
 } from './utils/sharedPortalFirestore';
+import {
+  loadOfflineCache,
+  OFFLINE_CACHE_KEYS,
+  saveOfflineCache,
+  startOfflineApiDaemon,
+} from './utils/offlineSyncManager';
 import {
   filterJobsList,
   loadSavedJobIds,
@@ -145,6 +157,9 @@ function parseRouteFromHash(): {
   }
   if (clean === 'admin-dashboard') {
     return { page: 'admin-dashboard', jobId: null };
+  }
+  if (clean === 'about-us' || clean === 'about') {
+    return { page: 'about-us', jobId: null };
   }
   if (clean === 'contact-us') {
     return { page: 'contact-us', jobId: null };
@@ -223,13 +238,21 @@ export default function App() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(initialRoute.jobId);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(auth.currentUser);
-  const [candidate, setCandidate] = useState<CandidateProfile | null>(null);
+  const [candidate, setCandidate] = useState<CandidateProfile | null>(() =>
+    getCachedCandidateProfile()
+  );
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [isLoadingApplications, setIsLoadingApplications] = useState(false);
 
-  const [approvedJobs, setApprovedJobs] = useState<JobListing[]>([]);
-  const [totalApprovedJobsCount, setTotalApprovedJobsCount] = useState(0);
-  const [isLoadingPublicJobs, setIsLoadingPublicJobs] = useState(true);
+  const [approvedJobs, setApprovedJobs] = useState<JobListing[]>(() =>
+    loadOfflineCache<JobListing[]>(OFFLINE_CACHE_KEYS.approvedJobs, [])
+  );
+  const [totalApprovedJobsCount, setTotalApprovedJobsCount] = useState(() =>
+    loadOfflineCache<JobListing[]>(OFFLINE_CACHE_KEYS.approvedJobs, []).length
+  );
+  const [isLoadingPublicJobs, setIsLoadingPublicJobs] = useState(
+    () => loadOfflineCache<JobListing[]>(OFFLINE_CACHE_KEYS.approvedJobs, []).length === 0
+  );
 
   const [employerJobs, setEmployerJobs] = useState<JobListing[]>([]);
   const [isLoadingEmployerJobs, setIsLoadingEmployerJobs] = useState(false);
@@ -238,11 +261,23 @@ export default function App() {
 
   const [adminJobs, setAdminJobs] = useState<JobListing[]>([]);
   const [isLoadingAdminJobs, setIsLoadingAdminJobs] = useState(false);
-  const [adminApplications, setAdminApplications] = useState<JobApplication[]>([]);
+  const [adminApplications, setAdminApplications] = useState<JobApplication[]>(() =>
+    loadOfflineCache<JobApplication[]>(OFFLINE_CACHE_KEYS.adminApplications, [])
+  );
+  const [companyRequirements, setCompanyRequirements] = useState<
+    SharedCompanyRequirementRecord[]
+  >(() =>
+    loadOfflineCache<SharedCompanyRequirementRecord[]>(
+      OFFLINE_CACHE_KEYS.companyRequirements,
+      []
+    )
+  );
   const [isLoadingAdminApplications, setIsLoadingAdminApplications] = useState(false);
   const [autoApproveEnabled, setAutoApproveEnabled] = useState(false);
 
-  const [insightsPosts, setInsightsPosts] = useState<InsightPost[]>([]);
+  const [insightsPosts, setInsightsPosts] = useState<InsightPost[]>(() =>
+    loadOfflineCache<InsightPost[]>(OFFLINE_CACHE_KEYS.insightsPosts, [])
+  );
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
 
   const [filters, setFilters] = useState<JobSearchFilters>(INITIAL_FILTERS);
@@ -299,6 +334,9 @@ export default function App() {
     );
     setApprovedJobs(merged);
     setTotalApprovedJobsCount(merged.length);
+    if (merged.length > 0) {
+      saveOfflineCache(OFFLINE_CACHE_KEYS.approvedJobs, merged);
+    }
   };
 
   const loadApprovedJobs = async () => {
@@ -346,14 +384,21 @@ export default function App() {
   const loadAdminJobsList = async () => {
     setIsLoadingAdminApplications(true);
     try {
-      const [serverApps, sharedApps] = await Promise.all([
+      const [serverApps, sharedApps, sharedReqs] = await Promise.all([
         fetchAdminApplications().catch(() => []),
         fetchSharedResumeGodamEntries().catch(() => []),
+        fetchSharedCompanyRequirements().catch(() => []),
       ]);
       if (serverApps.length > 0 || sharedApps.length > 0) {
-        setAdminApplications((prev) =>
-          mergeApplicationsLists(prev, serverApps, sharedApps)
-        );
+        setAdminApplications((prev) => {
+          const next = mergeApplicationsLists(prev, serverApps, sharedApps);
+          saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+          return next;
+        });
+      }
+      if (sharedReqs.length > 0) {
+        setCompanyRequirements(sharedReqs);
+        saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, sharedReqs);
       }
     } finally {
       if (!auth.currentUser?.emailVerified) {
@@ -378,8 +423,9 @@ export default function App() {
     try {
       const list = await fetchInsightPosts();
       setInsightsPosts(list);
+      saveOfflineCache(OFFLINE_CACHE_KEYS.insightsPosts, list);
     } catch {
-      setInsightsPosts([]);
+      // Preserve offline cached insights if network is offline
     } finally {
       setIsLoadingInsights(false);
     }
@@ -394,6 +440,7 @@ export default function App() {
 
   useEffect(() => {
     const stopSyncDaemon = startSharedAutoSyncDaemon();
+    const stopApiDaemon = startOfflineApiDaemon();
 
     const unsubscribeSharedJobs = subscribeSharedActiveJobs((jobsList) => {
       sharedActiveJobsRef.current = jobsList;
@@ -453,6 +500,7 @@ export default function App() {
     return () => {
       active = false;
       stopSyncDaemon();
+      stopApiDaemon();
       unsubscribeSharedJobs();
       unsubscribePrimaryJobs();
       window.removeEventListener('online', refreshCrossDeviceLiveData);
@@ -562,18 +610,35 @@ export default function App() {
       );
       unsubscribers.push(
         subscribeSharedResumeGodamEntries((sharedApps) => {
-          setAdminApplications((prev) => mergeApplicationsLists(prev, sharedApps));
+          setAdminApplications((prev) => {
+            const next = mergeApplicationsLists(prev, sharedApps);
+            saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+            return next;
+          });
           setIsLoadingAdminApplications(false);
+        })
+      );
+      unsubscribers.push(
+        subscribeSharedCompanyRequirements((reqs) => {
+          setCompanyRequirements(reqs);
+          saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, reqs);
         })
       );
       void Promise.all([
         fetchAdminApplications().catch(() => []),
         fetchSharedResumeGodamEntries().catch(() => []),
-      ]).then(([serverApps, sharedApps]) => {
+        fetchSharedCompanyRequirements().catch(() => []),
+      ]).then(([serverApps, sharedApps, sharedReqs]) => {
         if (serverApps.length > 0 || sharedApps.length > 0) {
-          setAdminApplications((prev) =>
-            mergeApplicationsLists(prev, serverApps, sharedApps)
-          );
+          setAdminApplications((prev) => {
+            const next = mergeApplicationsLists(prev, serverApps, sharedApps);
+            saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+            return next;
+          });
+        }
+        if (sharedReqs.length > 0) {
+          setCompanyRequirements(sharedReqs);
+          saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, sharedReqs);
         }
       });
       fetchGlobalAutoApproveSetting()
@@ -632,6 +697,8 @@ export default function App() {
     if (
       candidate.role === 'employer' &&
       (currentPage === 'home' ||
+        currentPage === 'login' ||
+        currentPage === 'register' ||
         currentPage === 'search-jobs' ||
         currentPage === 'job-details' ||
         currentPage === 'build-resume' ||
@@ -647,7 +714,9 @@ export default function App() {
       }
     } else if (
       candidate.role === 'candidate' &&
-      (currentPage === 'employer-dashboard' ||
+      (currentPage === 'login' ||
+        currentPage === 'register' ||
+        currentPage === 'employer-dashboard' ||
         currentPage === 'post-job' ||
         currentPage === 'admin-dashboard')
     ) {
@@ -655,6 +724,15 @@ export default function App() {
       setSelectedJobId(null);
       if (window.location.hash !== '#dashboard') {
         window.location.hash = '#dashboard';
+      }
+    } else if (
+      candidate.role === 'admin' &&
+      (currentPage === 'login' || currentPage === 'register')
+    ) {
+      setCurrentPage('admin-dashboard');
+      setSelectedJobId(null);
+      if (window.location.hash !== '#admin-dashboard') {
+        window.location.hash = '#admin-dashboard';
       }
     }
   }, [candidate, currentPage]);
@@ -693,6 +771,7 @@ export default function App() {
 
   const navigateToHashPage = (
     page:
+      | 'about-us'
       | 'search-jobs'
       | 'register'
       | 'login'
@@ -730,6 +809,10 @@ export default function App() {
       return;
     }
     scrollToSection('services');
+  };
+
+  const handleNavigateAbout = () => {
+    navigateToHashPage('about-us', '#about-us');
   };
 
   const handleToggleSaveJob = (jobId: string) => {
@@ -1210,6 +1293,7 @@ export default function App() {
         candidate={candidate}
         onNavigateHome={() => navigateToHome()}
         onNavigateJobs={handleNavigateJobs}
+        onNavigateAbout={handleNavigateAbout}
         onNavigateServices={handleNavigateServices}
         onNavigateSearchJobs={handleNavigateSearchJobs}
         onNavigateVcsInsights={handleNavigateVcsInsights}
@@ -1389,6 +1473,7 @@ export default function App() {
             candidate={candidate}
             jobs={adminJobs}
             applications={adminApplications}
+            companyRequirements={companyRequirements}
             isLoading={isLoadingAdminJobs}
             isLoadingApplications={isLoadingAdminApplications}
             autoApproveEnabled={autoApproveEnabled}
@@ -1403,6 +1488,8 @@ export default function App() {
             onBackHome={() => navigateToHome()}
           />
         )}
+
+        {currentPage === 'about-us' && <AboutUsPage />}
 
         {currentPage === 'contact-us' && (
           <ContactUsPage onBackHome={() => navigateToHome()} />
@@ -1463,6 +1550,7 @@ export default function App() {
 
       <Footer
         onNavigateHome={() => navigateToHome()}
+        onNavigateAbout={handleNavigateAbout}
         onNavigateSearchJobs={handleNavigateSearchJobs}
         onNavigateVcsInsights={handleNavigateVcsInsights}
         onNavigateBuildResume={handleNavigateBuildResume}
@@ -1471,6 +1559,8 @@ export default function App() {
         onNavigateContactUs={handleNavigateContactUs}
         onSubmitResume={handleUploadResumeAction}
       />
+
+      <OfflineBanner />
 
       <ApplyJobModal
         isOpen={applyModalState.isOpen}

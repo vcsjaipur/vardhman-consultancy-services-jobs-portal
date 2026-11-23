@@ -338,12 +338,14 @@ function writeOutbox(entries: OutboxEntry[]): void {
   try {
     if (entries.length === 0) {
       window.localStorage.removeItem(SHARED_SYNC_OUTBOX_KEY);
+      window.dispatchEvent(new Event('vcs-offline-change'));
       return;
     }
     window.localStorage.setItem(
       SHARED_SYNC_OUTBOX_KEY,
       JSON.stringify(entries.slice(-MAX_OUTBOX_ITEMS))
     );
+    window.dispatchEvent(new Event('vcs-offline-change'));
   } catch {
     // Fallback if base64 payload exceeds localStorage quota: strip binary field while keeping metadata
     try {
@@ -364,6 +366,7 @@ function writeOutbox(entries: OutboxEntry[]): void {
         return entry;
       });
       window.localStorage.setItem(SHARED_SYNC_OUTBOX_KEY, JSON.stringify(compact));
+      window.dispatchEvent(new Event('vcs-offline-change'));
     } catch {
       // Ignore unrecoverable storage errors
     }
@@ -943,4 +946,64 @@ export function subscribeSharedResumeGodamEntries(
   };
 }
 
+export interface SharedCompanyRequirementRecord {
+  id: string;
+  companyName: string;
+  contactPerson: string;
+  phone: string;
+  city: string;
+  postRequired: string;
+  salary: string;
+  vacancyCount: number;
+  jobDescription: string;
+  status: string;
+  createdAt: string;
+}
 
+function mapCompanyRequirementDocs(
+  docs: QueryDocumentSnapshot<DocumentData>[]
+): SharedCompanyRequirementRecord[] {
+  return docs
+    .map((snap) => {
+      const d = snap.data();
+      return {
+        id: String(d.id || snap.id),
+        companyName: String(d.companyName || ''),
+        contactPerson: String(d.contactPerson || ''),
+        phone: String(d.phone || ''),
+        city: String(d.city || ''),
+        postRequired: String(d.postRequired || ''),
+        salary: String(d.salary || 'Negotiable'),
+        vacancyCount: Math.max(1, Number(d.vacancyCount || 1) || 1),
+        jobDescription: String(d.jobDescription || ''),
+        status: String(d.status || 'new'),
+        createdAt: formatFirestoreDate(d.createdAt),
+      };
+    })
+    .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
+}
+
+export async function fetchSharedCompanyRequirements(): Promise<
+  SharedCompanyRequirementRecord[]
+> {
+  try {
+    const snap = await getDocs(collection(sharedDb, 'company_requirements'));
+    return mapCompanyRequirementDocs(snap.docs);
+  } catch {
+    return [];
+  }
+}
+
+export function subscribeSharedCompanyRequirements(
+  onUpdate: (entries: SharedCompanyRequirementRecord[]) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(sharedDb, 'company_requirements'),
+    (snapshot) => {
+      onUpdate(mapCompanyRequirementDocs(snapshot.docs));
+    },
+    () => {
+      // Non-fatal if collection listener is unavailable offline
+    }
+  );
+}

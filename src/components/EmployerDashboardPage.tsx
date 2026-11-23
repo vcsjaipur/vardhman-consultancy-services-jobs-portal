@@ -29,7 +29,11 @@ import {
   JobApprovalStatus,
   JobListing,
 } from '../types/portal';
-import { getStoredToken, postEmployerJob } from '../utils/candidateApi';
+import {
+  getStoredToken,
+  postEmployerJob,
+  submitPublicCompanyRequirement,
+} from '../utils/candidateApi';
 import {
   clearFormDraft,
   loadFormDraft,
@@ -38,6 +42,7 @@ import {
 import { createJobInFirestore, JOBS_PER_PAGE } from '../utils/firestorePortal';
 import { toFriendlyPortalError } from '../utils/jobHelpers';
 import { submitCompanyRequirementToSharedPortal } from '../utils/sharedPortalFirestore';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 import { DashboardCardSkeleton } from './SkeletonLoaders';
 
 const EMPLOYER_JD_DRAFT_KEY = 'vcs_draft_employer_jd_v1';
@@ -204,6 +209,12 @@ export function EmployerDashboardPage({
       <div className="bg-slate-50 min-h-[calc(100vh-5rem)] border-b border-slate-200">
         <div className="max-w-xl mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-lg">
+            <img
+              src={PORTAL_BRAND_LOGO_SRC}
+              alt="JobsNia.com — Jobs With Purpose"
+              decoding="sync"
+              className="h-16 sm:h-20 w-auto mx-auto object-contain mb-4 select-none"
+            />
             <div className="w-14 h-14 mx-auto rounded-2xl bg-[#063B7A] text-white flex items-center justify-center shadow-sm">
               <Building2 className="w-7 h-7" aria-hidden="true" />
             </div>
@@ -242,6 +253,12 @@ export function EmployerDashboardPage({
       <div className="bg-slate-50 min-h-[calc(100vh-5rem)] border-b border-slate-200">
         <div className="max-w-xl mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-lg">
+            <img
+              src={PORTAL_BRAND_LOGO_SRC}
+              alt="JobsNia.com — Jobs With Purpose"
+              decoding="sync"
+              className="h-16 sm:h-20 w-auto mx-auto object-contain mb-4 select-none"
+            />
             <div className="w-14 h-14 mx-auto rounded-2xl bg-[#063B7A] text-white flex items-center justify-center shadow-sm">
               <Building2 className="w-7 h-7" aria-hidden="true" />
             </div>
@@ -344,6 +361,7 @@ export function EmployerDashboardPage({
       };
 
       let dispatches: EmailDispatchSummary[] = [];
+      let dispatchedViaEmployerApi = false;
       if (getStoredToken()) {
         try {
           const response = await postEmployerJob({
@@ -365,8 +383,28 @@ export function EmployerDashboardPage({
             openings: openingsNum,
           });
           dispatches = response.emailDispatches || [];
+          dispatchedViaEmployerApi = true;
         } catch {
           dispatches = [];
+        }
+      }
+      if (!dispatchedViaEmployerApi) {
+        try {
+          const publicRes = await submitPublicCompanyRequirement({
+            id: reqId,
+            companyName: candidate.companyName || candidate.name,
+            contactPerson: candidate.name,
+            phone: candidate.phone || 'Not provided',
+            email: candidate.email,
+            city: location.trim(),
+            postRequired: title.trim(),
+            salary,
+            vacancyCount: openingsNum,
+            jobDescription: description.trim(),
+          });
+          dispatches = publicRes.emailDispatches || [];
+        } catch {
+          // Handled cleanly via shared portal sync & offline queue
         }
       }
 
@@ -434,8 +472,16 @@ export function EmployerDashboardPage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
             <div>
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center mb-3 shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
               <p className="text-xs sm:text-sm font-semibold text-[#F58220]">
-                Employer Dashboard · Confidential Hiring Desk
+                JobsNia.com · Employer Dashboard · Confidential Hiring Desk
               </p>
               <h1 className="mt-1 font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
                 {candidate.companyName || candidate.name}

@@ -24,6 +24,7 @@ const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
 const DESIGNATED_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'cvforvcs@gmail.com').trim().toLowerCase();
 const VCS_OFFICIAL_EMAIL = 'info@vardhmanconsultancy.com';
+const ADMIN_NOTIFICATION_CC = VCS_OFFICIAL_EMAIL;
 const GMAIL_SMTP_SENDER = 'contact2vardhmanconsultancy@gmail.com';
 const CONFIDENTIAL_COMPANY_LABEL = 'Confidential - Apply via VCS';
 
@@ -268,7 +269,8 @@ interface StoredEmailDispatch {
     | 'job-alert'
     | 'auto-apply-digest'
     | 'interview-reminder'
-    | 'skill-test-report';
+    | 'skill-test-report'
+    | 'auth-otp';
   from: string;
   replyTo?: string | null;
   to: string;
@@ -795,7 +797,7 @@ function signToken(candidateId: string): string {
   const payload = Buffer.from(
     JSON.stringify({
       sub: candidateId,
-      exp: Date.now() + 1000 * 60 * 60 * 24 * 7,
+      exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
     }),
     'utf8'
   ).toString('base64url');
@@ -921,7 +923,52 @@ interface OtpEntry {
   purpose: OtpPurpose;
 }
 
-const otpStore = new Map<string, OtpEntry>();
+const OTP_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const OTP_STORE_PATH = path.join(DATA_DIR, 'otp-store.json');
+
+function loadOtpMap(): Record<string, OtpEntry> {
+  ensureDataDirs();
+  try {
+    if (!fs.existsSync(OTP_STORE_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(OTP_STORE_PATH, 'utf8')) as Record<string, OtpEntry>;
+    const now = Date.now();
+    const active: Record<string, OtpEntry> = {};
+    for (const [k, v] of Object.entries(parsed || {})) {
+      if (v && typeof v.expiresAt === 'number' && v.expiresAt > now) {
+        active[k] = v;
+      }
+    }
+    return active;
+  } catch {
+    return {};
+  }
+}
+
+function saveOtpMap(map: Record<string, OtpEntry>): void {
+  ensureDataDirs();
+  const tmpPath = `${OTP_STORE_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(map, null, 2), 'utf8');
+  fs.renameSync(tmpPath, OTP_STORE_PATH);
+}
+
+const otpStore = {
+  get(key: string): OtpEntry | undefined {
+    const map = loadOtpMap();
+    return map[key];
+  },
+  set(key: string, entry: OtpEntry): void {
+    const map = loadOtpMap();
+    map[key] = entry;
+    saveOtpMap(map);
+  },
+  delete(key: string): void {
+    const map = loadOtpMap();
+    if (key in map) {
+      delete map[key];
+      saveOtpMap(map);
+    }
+  },
+};
 
 function normalizeOtpTarget(raw: string): { key: string; display: string; type: 'email' | 'phone' | 'invalid' } {
   const trimmed = String(raw ?? '').trim();
@@ -1207,8 +1254,8 @@ async function startServer() {
     });
   });
 
-  // Send OTP (Register Mobile / Login / Forgot Password & PIN)
-  app.post('/api/auth/otp/send', (req: Request, res: Response) => {
+  // Send OTP (Register / Login / Forgot Password & PIN)
+  app.post('/api/auth/otp/send', async (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const targetRaw = String(body.target ?? '').trim();
     const purposeRaw = String(body.purpose ?? 'register').trim().toLowerCase();
@@ -1217,13 +1264,14 @@ async function startServer() {
 
     const target = normalizeOtpTarget(targetRaw);
     if (target.type === 'invalid') {
-      res.status(400).json({ error: 'Please enter a valid 10-digit mobile number or email address.' });
+      res.status(400).json({ error: 'Please enter a valid Email address or 10-digit mobile number.' });
       return;
     }
 
     const db = readDb();
+    let matched: StoredCandidate | undefined;
     if (purpose === 'login' || purpose === 'reset') {
-      const matched = findUserByIdentifier(db.candidates, targetRaw);
+      matched = findUserByIdentifier(db.candidates, targetRaw);
       if (!matched) {
         res.status(404).json({
           error: 'No registered account found with this email or mobile number.',
@@ -1245,17 +1293,65 @@ async function startServer() {
     const code = String(crypto.randomInt(100000, 999999));
     otpStore.set(`${purpose}:${target.key}`, {
       code,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      expiresAt: Date.now() + OTP_TTL_MS,
       verified: false,
       purpose,
     });
 
+    const recipientEmail =
+      target.type === 'email'
+        ? target.display
+        : matched?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(matched.email)
+          ? matched.email
+          : '';
+
+    let emailDispatch: StoredEmailDispatch | null = null;
+    if (recipientEmail) {
+      const purposeLabel =
+        purpose === 'reset'
+          ? 'Password Reset Verification'
+          : purpose === 'login'
+            ? 'Instant Account Login'
+            : 'Registration Verification';
+      emailDispatch = await dispatchPortalEmail({
+        db,
+        type: 'auth-otp',
+        fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+        to: recipientEmail,
+        cc: null,
+        replyTo: VCS_OFFICIAL_EMAIL,
+        subject: `JobsNia.com — Your Verification OTP (${code})`,
+        text: [
+          `Hello${matched?.name ? ` ${matched.name}` : ''},`,
+          '',
+          `Your 6-digit One-Time Password (OTP) for ${purposeLabel} on JobsNia.com is:`,
+          '',
+          `OTP CODE: ${code}`,
+          '',
+          'This code is valid for 30 minutes. Please do not share this OTP with anyone.',
+          '',
+          'Regards,',
+          'JobsNia.com — Vardhman Consultancy Services (Est. 2012)',
+          'Official Email: info@vardhmanconsultancy.com',
+        ].join('\n'),
+        relatedEntityId: matched?.id || recipientEmail,
+      });
+      writeDb(db);
+    }
+
+    const deliveredVia = emailDispatch?.deliveredVia || 'queued';
+    const targetDisplay = recipientEmail || target.display;
+
     res.json({
       sent: true,
-      targetDisplay: target.display,
-      verificationCode: code,
-      expiresInSeconds: 600,
-      message: `OTP sent to ${target.display}.`,
+      targetDisplay,
+      deliveredVia,
+      ...(deliveredVia !== 'smtp' ? { verificationCode: code } : {}),
+      expiresInSeconds: Math.floor(OTP_TTL_MS / 1000),
+      message:
+        deliveredVia === 'smtp'
+          ? `OTP sent immediately to ${targetDisplay}. Please check your email inbox (valid for 30 minutes).`
+          : `OTP generated for ${targetDisplay} (valid for 30 minutes).`,
     });
   });
 
@@ -1568,7 +1664,7 @@ async function startServer() {
           type: 'employer-requirement',
           fromDisplayName: `${name} - ${companyName}`,
           to: DESIGNATED_ADMIN_EMAIL,
-          cc: VCS_OFFICIAL_EMAIL,
+          cc: ADMIN_NOTIFICATION_CC,
           replyTo: email,
           subject: `New Employer Requirement: ${derivedTitle} - ${companyName}`,
           text: registrationJdBody,
@@ -1579,27 +1675,63 @@ async function startServer() {
         const autoReplyBody = [
           `Dear ${name},`,
           '',
-          'Thank you for registering your employer account with Vardhman Consultancy Services.',
+          'Thank you for registering your employer account with JobsNia.com (A Venture of Vardhman Consultancy Services).',
           '',
           `We have received your hiring requirement (${initialJob.id}) for "${companyName}"${jdFileName ? ` along with your attached JD (${jdFileName})` : ''}.`,
           'Our executive recruitment desk will review and connect with you shortly.',
           '',
           'Warm Regards,',
-          'Vardhman Consultancy Services',
+          'JobsNia.com — Vardhman Consultancy Services',
           'Email: info@vardhmanconsultancy.com',
-          'Mobile & WhatsApp: 7877250630',
         ].join('\n');
 
         await dispatchPortalEmail({
           db,
           type: 'employer-autoreply',
-          fromDisplayName: 'Vardhman Consultancy Services',
+          fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
           to: email,
-          cc: VCS_OFFICIAL_EMAIL,
+          cc: ADMIN_NOTIFICATION_CC,
           replyTo: VCS_OFFICIAL_EMAIL,
           subject: `Employer Registration & Requirement Received - ${companyName}`,
           text: autoReplyBody,
           relatedEntityId: initialJob.id,
+        });
+      }
+
+      if (effectiveRole === 'candidate') {
+        const candidateRegAttachments = resolveResumeAttachment(resumeId, resumeFileName);
+        const candidateRegBody = [
+          'NEW CANDIDATE REGISTRATION & RESUME - JOBSNIA.COM / VARDHMAN CONSULTANCY SERVICES',
+          '',
+          '=== COMPLETE CANDIDATE DETAILS ===',
+          `Candidate ID: ${newCandidate.id}`,
+          `Full Name: ${newCandidate.name}`,
+          `Email: ${newCandidate.email}`,
+          `Mobile Number: ${newCandidate.phone || 'Not provided'}`,
+          `City / State: ${[newCandidate.city, newCandidate.state].filter(Boolean).join(', ') || 'India'}`,
+          `Qualification: ${newCandidate.qualification || 'Not specified'}`,
+          `Experience: ${newCandidate.experience || 'Not specified'}`,
+          `Current Company: ${newCandidate.currentCompany || 'Not specified'}`,
+          `Designation / Role: ${newCandidate.designation || newCandidate.preferredRole || 'Not specified'}`,
+          `Key Skills: ${(newCandidate.keySkills || []).join(', ') || 'Not specified'}`,
+          `Resume File: ${newCandidate.resumeFileName || 'Profile Submitted'}`,
+          newCandidate.resumeSummary ? `Resume Summary: ${newCandidate.resumeSummary}` : '',
+          `Registered At: ${newCandidate.createdAt}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        await dispatchPortalEmail({
+          db,
+          type: 'candidate-application',
+          fromDisplayName: newCandidate.name,
+          to: DESIGNATED_ADMIN_EMAIL,
+          cc: ADMIN_NOTIFICATION_CC,
+          replyTo: newCandidate.email,
+          subject: `New Candidate Profile & Resume: ${newCandidate.name} (${newCandidate.city})`,
+          text: candidateRegBody,
+          attachments: candidateRegAttachments,
+          relatedEntityId: newCandidate.id,
         });
       }
 
@@ -1713,7 +1845,7 @@ async function startServer() {
     res.json({ token, candidate: toPublicCandidate(candidate) });
   });
 
-  // Reset Password + 4-Digit PIN via Verified OTP
+  // Reset Password (+ Optional 4-Digit PIN) via Verified OTP
   app.post('/api/auth/reset-credentials', (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const targetRaw = String(body.target ?? '').trim();
@@ -1734,15 +1866,15 @@ async function startServer() {
       res.status(400).json({ error: 'New password must be at least 6 characters long.' });
       return;
     }
-    if (!/^\d{4}$/.test(newPin)) {
-      res.status(400).json({ error: 'New PIN must be exactly 4 digits.' });
+    if (newPin && !/^\d{4}$/.test(newPin)) {
+      res.status(400).json({ error: 'New PIN must be exactly 4 digits (or leave blank).' });
       return;
     }
 
     const storeKey = `reset:${target.key}`;
     const entry = otpStore.get(storeKey);
     if (!entry || entry.expiresAt < Date.now() || entry.code !== otp || !entry.verified) {
-      res.status(400).json({ error: 'Please verify a valid OTP before resetting credentials.' });
+      res.status(400).json({ error: 'Please verify a valid OTP before resetting your password.' });
       return;
     }
 
@@ -1755,20 +1887,21 @@ async function startServer() {
 
     const idx = db.candidates.findIndex((c) => c.id === candidate.id);
     const passCreds = hashPassword(newPassword);
-    const pinCreds = hashPassword(newPin);
+    const pinCreds = newPin ? hashPassword(newPin) : null;
     db.candidates[idx] = {
       ...db.candidates[idx],
       passwordSalt: passCreds.salt,
       passwordHash: passCreds.hash,
-      pinSalt: pinCreds.salt,
-      pinHash: pinCreds.hash,
+      ...(pinCreds ? { pinSalt: pinCreds.salt, pinHash: pinCreds.hash } : {}),
     };
     writeDb(db);
     otpStore.delete(storeKey);
 
     res.json({
       reset: true,
-      message: 'Your Password and 4-Digit PIN have been updated successfully.',
+      message: pinCreds
+        ? 'Your Password and 4-Digit PIN have been updated successfully.'
+        : 'Your Password has been updated successfully.',
     });
   });
 
@@ -2280,7 +2413,7 @@ async function startServer() {
       }
       if (!termsAccepted) {
         res.status(400).json({
-          error: 'Please accept Job Secure Terms & Conditions to submit.',
+          error: 'Please accept Candidate Terms & Conditions to submit.',
         });
         return;
       }
@@ -2321,22 +2454,24 @@ async function startServer() {
       db.applications.push(newApp);
 
       const emailText = [
-        'New Candidate Job Application Received (Resume Godam) - Vardhman Consultancy Services',
+        'NEW CANDIDATE APPLICATION & COMPLETE RESUME - JOBSNIA.COM (VARDHMAN CONSULTANCY SERVICES)',
         '',
-        '=== APPLICANT DETAILS ===',
-        `Name: ${newApp.applicantName}`,
-        `Official Email: ${newApp.applicantEmail}`,
-        `Mobile Number: ${newApp.applicantPhone}`,
-        `City: ${newApp.city || newApp.location}`,
-        `Qualification / Experience: ${newApp.qualificationExperience}`,
-        `Job Secure Terms Accepted: Yes`,
-        '',
-        '=== APPLIED POSITION ===',
+        '=== COMPLETE CANDIDATE & APPLICATION FORM DETAILS ===',
         `Application ID: ${newApp.id}`,
+        `Full Name: ${newApp.applicantName}`,
+        `Email Address: ${newApp.applicantEmail}`,
+        `Mobile Number: ${newApp.applicantPhone}`,
+        `City / Current Location: ${newApp.city || newApp.location}`,
+        `Qualification / Experience: ${newApp.qualificationExperience}`,
         `Post Applied / Job Title: ${newApp.jobTitle}`,
+        `Job Reference ID: ${newApp.jobId}`,
         `Job Location: ${newApp.location}`,
+        `Salary Package: ${newApp.salary}`,
+        `Terms & Conditions Accepted: Yes (Same-Day Interview Feedback & 24-Hour Offer Letter Sharing Accepted)`,
+        '',
+        '=== ATTACHED FULL RESUME / PROFILE ===',
         `Resume File: ${newApp.resumeFileName}`,
-        resumeSummary ? `Summary: ${resumeSummary}` : '',
+        resumeSummary ? `Skills / Work Summary:\n${resumeSummary}` : '',
         `Submitted At: ${newApp.appliedAt}`,
       ]
         .filter(Boolean)
@@ -2347,9 +2482,9 @@ async function startServer() {
         type: 'candidate-application',
         fromDisplayName: newApp.applicantName,
         to: DESIGNATED_ADMIN_EMAIL,
-        cc: VCS_OFFICIAL_EMAIL,
+        cc: ADMIN_NOTIFICATION_CC,
         replyTo: newApp.applicantEmail,
-        subject: `New Application: ${newApp.jobTitle} - ${newApp.applicantName}`,
+        subject: `New Candidate Application: ${newApp.jobTitle} - ${newApp.applicantName}`,
         text: emailText,
         attachments: resolveResumeAttachment(saved.resumeId, saved.resumeFileName),
         relatedEntityId: newApp.id,
@@ -2414,7 +2549,7 @@ async function startServer() {
       }
       if (!termsAccepted) {
         res.status(400).json({
-          error: 'Please accept Job Secure Terms & Conditions to submit.',
+          error: 'Please accept Candidate Terms & Conditions to submit.',
         });
         return;
       }
@@ -2469,24 +2604,32 @@ async function startServer() {
         'Candidate / Individual';
 
       const emailText = [
-        'New Candidate Job Application Received - Vardhman Consultancy Services',
+        'NEW CANDIDATE JOB APPLICATION & RESUME - JOBSNIA.COM (VARDHMAN CONSULTANCY SERVICES)',
         '',
-        '=== APPLICANT DETAILS ===',
-        `Name: ${newApp.applicantName}`,
-        `Official Email: ${newApp.applicantEmail}`,
-        `Phone: ${newApp.applicantPhone}`,
+        '=== COMPLETE CANDIDATE DETAILS ===',
+        `Application ID: ${newApp.id}`,
+        `Full Name: ${newApp.applicantName}`,
+        `Email Address: ${newApp.applicantEmail}`,
+        `Mobile Number: ${newApp.applicantPhone}`,
         city ? `City: ${city}` : '',
         qualificationExperience ? `Qualification / Experience: ${qualificationExperience}` : '',
-        `Company Name: ${candidateCompany}`,
+        `Current Organization: ${candidateCompany}`,
+        req.candidate.designation ? `Designation: ${req.candidate.designation}` : '',
+        req.candidate.keySkills?.length ? `Key Skills: ${req.candidate.keySkills.join(', ')}` : '',
+        req.candidate.currentCtc ? `Current CTC: ${req.candidate.currentCtc}` : '',
+        req.candidate.expectedSalary ? `Expected Salary: ${req.candidate.expectedSalary}` : '',
+        req.candidate.noticePeriod ? `Notice Period: ${req.candidate.noticePeriod}` : '',
+        'Terms & Conditions Accepted: Yes',
         '',
-        '=== APPLIED POSITION ===',
-        `Application ID: ${newApp.id}`,
+        '=== COMPLETE APPLICATION FORM ===',
+        `Job Reference ID: ${newApp.jobId}`,
         `Job Title: ${newApp.jobTitle}`,
         `Location: ${newApp.location}`,
         `Salary: ${newApp.salary}`,
         `Experience Required: ${newApp.experience}`,
-        `Resume File: ${newApp.resumeFileName}`,
-        resumeSummary ? `Summary: ${resumeSummary}` : '',
+        `Resume File Attached: ${newApp.resumeFileName}`,
+        resumeSummary ? `Skills / Work Summary:\n${resumeSummary}` : '',
+        req.candidate.resumeSummary ? `Candidate Profile Summary:\n${req.candidate.resumeSummary}` : '',
         `Submitted At: ${newApp.appliedAt}`,
       ]
         .filter(Boolean)
@@ -2502,9 +2645,9 @@ async function startServer() {
         type: 'candidate-application',
         fromDisplayName: displayLabel,
         to: DESIGNATED_ADMIN_EMAIL,
-        cc: VCS_OFFICIAL_EMAIL,
+        cc: ADMIN_NOTIFICATION_CC,
         replyTo: newApp.applicantEmail,
-        subject: `New Application: ${newApp.jobTitle} - ${newApp.applicantName}`,
+        subject: `New Candidate Application: ${newApp.jobTitle} - ${newApp.applicantName}`,
         text: emailText,
         attachments: resolveResumeAttachment(finalResumeId, finalResumeFileName),
         relatedEntityId: newApp.id,
@@ -2514,7 +2657,7 @@ async function startServer() {
 
       res.status(201).json({
         application: newApp,
-        message: 'Email Sent Successfully. Application submitted to Admin with CC to info@vardhmanconsultancy.com.',
+        message: 'Application Submitted Successfully.',
         emailDispatch,
       });
     } catch (error) {
@@ -2698,9 +2841,9 @@ async function startServer() {
       type: 'employer-requirement',
       fromDisplayName: `${employerContactPerson} - ${employerCompany}`,
       to: DESIGNATED_ADMIN_EMAIL,
-      cc: VCS_OFFICIAL_EMAIL,
+      cc: ADMIN_NOTIFICATION_CC,
       replyTo: officialEmployerEmail,
-      subject: `Employer Requirement: ${newJob.title} - ${employerCompany}`,
+      subject: `Company Requirement: ${newJob.title} - ${employerCompany}`,
       text: employerRequirementBody,
       relatedEntityId: newJob.id,
     });
@@ -2708,7 +2851,7 @@ async function startServer() {
     const autoReplyBody = [
       `Dear ${employerContactPerson},`,
       '',
-      'Thank you for submitting your hiring requirement with Vardhman Consultancy Services (Est. 2012).',
+      'Thank you for submitting your hiring requirement with JobsNia.com (A Venture of Vardhman Consultancy Services, Est. 2012).',
       '',
       `We have received your complete requirement / JD for "${newJob.title}" (${employerCompany}) with Reference ID: ${newJob.id}.`,
       'Your requirement stays confidential inside your Employer Dashboard and will never be displayed with your company name on the public portal.',
@@ -2716,33 +2859,172 @@ async function startServer() {
       'Our recruitment desk will connect with you shortly regarding candidate screening and shortlisting.',
       '',
       'Warm Regards,',
-      'Vardhman Consultancy Services',
+      'JobsNia.com — Vardhman Consultancy Services',
       'Email: info@vardhmanconsultancy.com',
-      'Mobile & WhatsApp: 7877250630',
     ].join('\n');
 
     const autoReplyDispatch = await dispatchPortalEmail({
       db,
       type: 'employer-autoreply',
-      fromDisplayName: 'Vardhman Consultancy Services',
+      fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
       to: officialEmployerEmail,
-      cc: VCS_OFFICIAL_EMAIL,
+      cc: ADMIN_NOTIFICATION_CC,
       replyTo: VCS_OFFICIAL_EMAIL,
-      subject: `Requirement Received: ${newJob.title} - Vardhman Consultancy Services`,
+      subject: `Requirement Received: ${newJob.title} - JobsNia.com / Vardhman Consultancy Services`,
       text: autoReplyBody,
       relatedEntityId: newJob.id,
     });
+
+    let alertDispatchesCount = 0;
+    if (initialStatus === 'Approved') {
+      alertDispatchesCount = await notifyMatchingSubscribersForJob(db, {
+        id: newJob.id,
+        title: newJob.title,
+        designation: newJob.designation,
+        location: newJob.location,
+        experience: newJob.experience,
+        salary: newJob.salary,
+        skills: newJob.skills,
+        qualification: newJob.qualification,
+        description: newJob.description,
+      });
+    }
 
     writeDb(db);
 
     res.status(201).json({
       job: newJob,
+      alertDispatchesCount,
       message:
         initialStatus === 'Approved'
-          ? 'Email Sent Successfully. Job is published live on the Vardhman Consultancy Services Portal, and Full Employer Details + JD emailed to Admin with CC to info@vardhmanconsultancy.com.'
-          : 'Email Sent Successfully. Requirement submitted for Admin Approval and Full Employer Details + JD emailed to Admin with CC to info@vardhmanconsultancy.com.',
+          ? 'Company requirement published and emailed successfully.'
+          : 'Company requirement submitted and emailed successfully.',
       emailDispatches: [requirementDispatch, autoReplyDispatch],
     });
+  });
+
+  // Public Company Hiring Requirement Submission (Works directly from Post A Job form with instant Email Sync)
+  app.post('/api/public/company-requirement', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const companyName = String(body.companyName ?? body.company ?? '').trim();
+      const contactPerson = String(body.contactPerson ?? body.recruiterName ?? '').trim();
+      const phone = String(body.phone ?? body.recruiterPhone ?? '').trim();
+      const recruiterEmail = normalizeEmail(body.email ?? body.recruiterEmail);
+      const city = String(body.city ?? body.location ?? 'Pan India').trim() || 'Pan India';
+      const postRequired = String(body.postRequired ?? body.title ?? '').trim();
+      const salary = String(body.salary ?? 'Negotiable').trim() || 'Negotiable';
+      const rawVacancies = Number(body.vacancyCount ?? body.openings ?? 1);
+      const vacancyCount =
+        Number.isFinite(rawVacancies) && rawVacancies >= 1 ? Math.floor(rawVacancies) : 1;
+      const jobDescription = String(body.jobDescription ?? body.description ?? '').trim();
+
+      if (!companyName) {
+        res.status(400).json({ error: 'Company Name is required.' });
+        return;
+      }
+      if (!contactPerson) {
+        res.status(400).json({ error: 'Contact Person Name is required.' });
+        return;
+      }
+      if (phone.replace(/\D/g, '').length < 10) {
+        res.status(400).json({ error: 'Please enter a valid 10-digit Mobile Number.' });
+        return;
+      }
+      if (!postRequired) {
+        res.status(400).json({ error: 'Post Required / Job Title is required.' });
+        return;
+      }
+      if (!jobDescription) {
+        res.status(400).json({ error: 'Complete Job Description / Requirement is required.' });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const postedAt = new Date().toLocaleDateString('en-US', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+      const requestedId = String(body.id ?? '').trim();
+      const jobId = /^[a-zA-Z0-9_-]{6,128}$/.test(requestedId)
+        ? requestedId
+        : `req_${crypto.randomUUID().replace(/-/g, '')}`;
+
+      const newJob: StoredJob = {
+        id: jobId,
+        employerId: 'public_employer_form',
+        company: companyName,
+        companyMasked: CONFIDENTIAL_COMPANY_LABEL,
+        recruiterName: contactPerson,
+        recruiterEmail: recruiterEmail || VCS_OFFICIAL_EMAIL,
+        recruiterPhone: phone,
+        title: postRequired,
+        designation: postRequired,
+        location: city,
+        experience: 'As per Job Description',
+        salary,
+        jobType: 'Full-Time',
+        skills: [postRequired],
+        description: jobDescription,
+        qualification: 'As per Job Description',
+        openings: vacancyCount,
+        lastDateToApply: 'Open Until Filled',
+        postedAt,
+        createdAt: nowIso,
+        status: 'Pending',
+      };
+
+      const db = readDb();
+      db.jobs.push(newJob);
+
+      const companyEmailBody = [
+        'NEW COMPANY HIRING REQUIREMENT - JOBSNIA.COM (VARDHMAN CONSULTANCY SERVICES)',
+        '',
+        '=== COMPLETE COMPANY & CONTACT DETAILS ===',
+        `Requirement ID: ${newJob.id}`,
+        `Company Name: ${companyName}`,
+        `Contact Person Name: ${contactPerson}`,
+        `Mobile Number: ${phone}`,
+        `Official Email: ${recruiterEmail || 'Not provided'}`,
+        `City / Location: ${city}`,
+        '',
+        '=== COMPLETE REQUIREMENT / FORM DETAILS ===',
+        `Post Required: ${postRequired}`,
+        `Salary Package / Budget: ${salary}`,
+        `Number of Vacancies: ${vacancyCount}`,
+        `Submitted At: ${nowIso}`,
+        '',
+        'Complete Job Description / Requirement:',
+        jobDescription,
+      ].join('\n');
+
+      const emailDispatch = await dispatchPortalEmail({
+        db,
+        type: 'employer-requirement',
+        fromDisplayName: `${contactPerson} - ${companyName}`,
+        to: DESIGNATED_ADMIN_EMAIL,
+        cc: ADMIN_NOTIFICATION_CC,
+        replyTo: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recruiterEmail)
+          ? recruiterEmail
+          : VCS_OFFICIAL_EMAIL,
+        subject: `New Company Requirement: ${postRequired} - ${companyName}`,
+        text: companyEmailBody,
+        relatedEntityId: newJob.id,
+      });
+
+      writeDb(db);
+
+      res.status(201).json({
+        job: newJob,
+        message: 'Company requirement submitted and emailed successfully.',
+        emailDispatch,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to submit company requirement.';
+      res.status(400).json({ error: message });
+    }
   });
 
   // Employer Dashboard: My Posted Jobs
@@ -2765,12 +3047,242 @@ async function startServer() {
     res.json({ jobs: allJobs });
   });
 
-  // Admin Approve / Reject Job
+  interface AlertJobSummary {
+    id: string;
+    title: string;
+    designation: string;
+    location: string;
+    experience: string;
+    salary: string;
+    skills: string[];
+    qualification: string;
+    description: string;
+  }
+
+  function normalizeAlertJobsList(rawJobs: unknown, db: PortalDatabase): AlertJobSummary[] {
+    const map = new Map<string, AlertJobSummary>();
+    for (const j of db.jobs) {
+      if (j.status !== 'Approved') continue;
+      map.set(j.id, {
+        id: j.id,
+        title: j.title,
+        designation: j.designation,
+        location: j.location,
+        experience: j.experience,
+        salary: j.salary,
+        skills: Array.isArray(j.skills) ? j.skills : [],
+        qualification: j.qualification || '',
+        description: j.description || '',
+      });
+    }
+    if (Array.isArray(rawJobs)) {
+      for (const item of rawJobs) {
+        if (!item || typeof item !== 'object') continue;
+        const obj = item as Record<string, unknown>;
+        const id = String(obj.id ?? '').trim();
+        const title = String(obj.title ?? obj.jobTitle ?? '').trim();
+        if (!id || !title || map.has(id)) continue;
+        map.set(id, {
+          id,
+          title,
+          designation: String(obj.designation ?? title).trim(),
+          location: String(obj.location ?? 'Pan India').trim(),
+          experience: String(obj.experience ?? 'As per JD').trim(),
+          salary: String(obj.salary ?? 'Competitive').trim(),
+          skills: Array.isArray(obj.skills) ? obj.skills.map(String) : [],
+          qualification: String(obj.qualification ?? '').trim(),
+          description: String(obj.description ?? '').trim(),
+        });
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  function findMatchingJobsForAlert(
+    jobs: AlertJobSummary[],
+    city: string,
+    category: string
+  ): AlertJobSummary[] {
+    const cityNorm = city.trim().toLowerCase();
+    const catTokens = category
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 2 && t !== 'and' && t !== 'all');
+
+    const cityTokens = cityNorm
+      .replace(/[^a-z0-9\s]+/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 2);
+
+    const scored = jobs
+      .map((job) => {
+        const jobLoc = job.location.toLowerCase();
+        const haystack = [
+          job.title,
+          job.designation,
+          job.qualification,
+          job.skills.join(' '),
+          job.description,
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        const isPanIndiaCity =
+          !cityNorm ||
+          cityNorm.includes('pan india') ||
+          cityNorm.includes('all india') ||
+          cityNorm === 'india';
+        const jobIsFlexibleLoc =
+          jobLoc.includes('pan india') ||
+          jobLoc.includes('all india') ||
+          jobLoc.includes('remote');
+        const cityMatch =
+          isPanIndiaCity ||
+          jobIsFlexibleLoc ||
+          cityTokens.some((ct) => jobLoc.includes(ct));
+
+        const categoryHits = catTokens.filter((ct) => haystack.includes(ct)).length;
+        const categoryMatch = catTokens.length === 0 || categoryHits > 0;
+
+        let score = 0;
+        if (cityMatch) score += 2;
+        if (categoryMatch) score += 2 + categoryHits;
+        return { job, score, cityMatch, categoryMatch };
+      })
+      .filter((entry) => entry.cityMatch && entry.categoryMatch);
+
+    if (scored.length > 0) {
+      return scored.sort((a, b) => b.score - a.score).map((s) => s.job);
+    }
+
+    // Fallback to category-only matches across India if exact city + category returns 0
+    return jobs.filter((job) => {
+      if (catTokens.length === 0) return true;
+      const haystack = `${job.title} ${job.designation} ${job.skills.join(' ')} ${job.description}`.toLowerCase();
+      return catTokens.some((ct) => haystack.includes(ct));
+    });
+  }
+
+  function formatAlertJobsEmailBlock(matchedJobs: AlertJobSummary[]): string {
+    if (matchedJobs.length === 0) {
+      return 'No live openings match this exact filter right now — you will be emailed as soon as new matching roles are verified.';
+    }
+    return matchedJobs
+      .slice(0, 6)
+      .map((job, idx) =>
+        [
+          `${idx + 1}. ${job.title}`,
+          `   Location: ${job.location} | Experience: ${job.experience} | Package: ${job.salary}`,
+          job.skills.length > 0 ? `   Key Skills: ${job.skills.slice(0, 5).join(', ')}` : '',
+          `   Apply on Portal: #job/${job.id}`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
+      .join('\n\n');
+  }
+
+  async function notifyMatchingSubscribersForJob(
+    db: PortalDatabase,
+    job: AlertJobSummary
+  ): Promise<number> {
+    const jobLoc = job.location.toLowerCase();
+    const jobText = [
+      job.title,
+      job.designation,
+      job.qualification,
+      job.skills.join(' '),
+      job.description,
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    const recipientMap = new Map<string, { name: string; email: string; relatedId: string }>();
+
+    for (const sub of db.jobAlerts) {
+      const email = normalizeEmail(sub.email);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+      const matched = findMatchingJobsForAlert([job], sub.city || '', sub.category || '');
+      if (matched.length > 0) {
+        recipientMap.set(email, { name: sub.name, email, relatedId: sub.id });
+      }
+    }
+
+    for (const cand of db.candidates) {
+      if ((cand.role || 'candidate') !== 'candidate') continue;
+      if (!(cand.emailNotificationsEnabled ?? true)) continue;
+      const email = normalizeEmail(cand.email);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+
+      const prefCity = (cand.alertCity || cand.preferredLocation || cand.city || '').toLowerCase();
+      const prefCat = (cand.alertCategory || cand.preferredRole || cand.designation || '').toLowerCase();
+      const prefSkills = Array.isArray(cand.keySkills) ? cand.keySkills : [];
+
+      const cityOk =
+        !prefCity ||
+        prefCity.includes('pan india') ||
+        jobLoc.includes('pan india') ||
+        jobLoc.includes(prefCity) ||
+        prefCity.split(/[,\s]+/).some((c) => c.length > 2 && jobLoc.includes(c));
+
+      const roleTokens = [
+        ...prefCat.split(/[^a-z0-9]+/).filter((t) => t.length >= 3),
+        ...prefSkills.map((s) => s.toLowerCase()).filter((s) => s.length >= 2),
+      ];
+      const topicOk = roleTokens.length === 0 || roleTokens.some((tok) => jobText.includes(tok));
+
+      if (cityOk && topicOk && !recipientMap.has(email)) {
+        recipientMap.set(email, { name: cand.name, email, relatedId: cand.id });
+      }
+    }
+
+    let dispatchedCount = 0;
+    const targets = Array.from(recipientMap.values()).slice(0, 50);
+    for (const target of targets) {
+      await dispatchPortalEmail({
+        db,
+        type: 'job-alert',
+        fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+        to: target.email,
+        cc: null,
+        replyTo: VCS_OFFICIAL_EMAIL,
+        subject: `New Verified Opening: ${job.title} (${job.location}) - JobsNia.com`,
+        text: [
+          `Dear ${target.name},`,
+          '',
+          'A newly verified job opportunity matching your Job Alert preferences is now live on JobsNia.com:',
+          '',
+          `Role: ${job.title}`,
+          `Designation: ${job.designation}`,
+          `Organization: ${CONFIDENTIAL_COMPANY_LABEL}`,
+          `Location: ${job.location}`,
+          `Experience: ${job.experience}`,
+          `Salary / CTC: ${job.salary}`,
+          job.skills.length > 0 ? `Skills: ${job.skills.slice(0, 6).join(', ')}` : '',
+          '',
+          `View & Apply directly on JobsNia.com: #job/${job.id}`,
+          '',
+          'Regards,',
+          'JobsNia.com — Vardhman Consultancy Services (Est. 2012)',
+          'Email: info@vardhmanconsultancy.com',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        relatedEntityId: `${target.relatedId}:${job.id}`,
+      });
+      dispatchedCount += 1;
+    }
+
+    return dispatchedCount;
+  }
+
+  // Admin Approve / Reject Job (triggers matching Job Alert Emails on Approval)
   app.patch(
     '/api/admin/jobs/:jobId/status',
     requireAuth,
     requireAdmin,
-    (req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       const jobId = String(req.params.jobId || '').trim();
       const body = (req.body || {}) as Record<string, unknown>;
       const status = String(body.status ?? '').trim();
@@ -2787,39 +3299,117 @@ async function startServer() {
         return;
       }
 
+      const previousStatus = db.jobs[idx].status;
       db.jobs[idx] = {
         ...db.jobs[idx],
         status,
       };
+
+      let alertDispatchesCount = 0;
+      if (status === 'Approved' && previousStatus !== 'Approved') {
+        const updatedJob = db.jobs[idx];
+        alertDispatchesCount = await notifyMatchingSubscribersForJob(db, {
+          id: updatedJob.id,
+          title: updatedJob.title,
+          designation: updatedJob.designation,
+          location: updatedJob.location,
+          experience: updatedJob.experience,
+          salary: updatedJob.salary,
+          skills: updatedJob.skills,
+          qualification: updatedJob.qualification,
+          description: updatedJob.description,
+        });
+      }
+
       writeDb(db);
 
-      res.json({ job: db.jobs[idx] });
+      res.json({ job: db.jobs[idx], alertDispatchesCount });
     }
   );
 
-  // WhatsApp & Email Job Alerts Subscription
+  // Admin: View Job Alert Subscribers & Dispatch Alert Emails for Approved Jobs
+  app.get(
+    '/api/admin/job-alerts',
+    requireAuth,
+    requireAdmin,
+    (_req: AuthenticatedRequest, res: Response) => {
+      const db = readDb();
+      const subscribers = db.jobAlerts
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          email: a.email || '',
+          city: a.city,
+          category: a.category,
+          createdAt: a.createdAt,
+        }))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+      const optedInCandidatesCount = db.candidates.filter(
+        (c) => (c.role || 'candidate') === 'candidate' && (c.emailNotificationsEnabled ?? true)
+      ).length;
+
+      const totalAlertsSent = db.emailDispatches.filter((d) => d.type === 'job-alert').length;
+
+      res.json({
+        subscribers,
+        subscribersCount: subscribers.length,
+        optedInCandidatesCount,
+        totalAlertsSent,
+      });
+    }
+  );
+
+  app.post(
+    '/api/admin/job-alerts/dispatch',
+    requireAuth,
+    requireAdmin,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const rawJob = body.job as Record<string, unknown> | undefined;
+      if (!rawJob || !rawJob.id || !rawJob.title) {
+        res.status(400).json({ error: 'Job details are required to dispatch subscriber alerts.' });
+        return;
+      }
+
+      const db = readDb();
+      const sentCount = await notifyMatchingSubscribersForJob(db, {
+        id: String(rawJob.id),
+        title: String(rawJob.title),
+        designation: String(rawJob.designation || rawJob.title),
+        location: String(rawJob.location || 'Pan India'),
+        experience: String(rawJob.experience || 'As per JD'),
+        salary: String(rawJob.salary || 'Competitive'),
+        skills: Array.isArray(rawJob.skills) ? rawJob.skills.map(String) : [],
+        qualification: String(rawJob.qualification || ''),
+        description: String(rawJob.description || ''),
+      });
+      writeDb(db);
+
+      res.json({
+        dispatchedCount: sentCount,
+        message:
+          sentCount > 0
+            ? `Dispatched Job Alert Email to ${sentCount} matching subscriber(s).`
+            : 'No matching email subscribers found for this city/category yet.',
+      });
+    }
+  );
+
+  // Email Job Alerts Subscription (with immediate Matching Jobs Digest)
   app.post('/api/job-alerts', async (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const name = String(body.name ?? '').trim();
-    const whatsappNumber = String(body.whatsappNumber ?? '').trim();
     const email = normalizeEmail(body.email);
     const city = String(body.city ?? '').trim();
     const category = String(body.category ?? '').trim();
-    const rawChannels = Array.isArray(body.channels)
-      ? body.channels.filter((ch): ch is 'whatsapp' | 'email' => ch === 'whatsapp' || ch === 'email')
-      : [];
-    const channels: Array<'whatsapp' | 'email'> =
-      rawChannels.length > 0 ? rawChannels : ['whatsapp'];
+    const channels: Array<'whatsapp' | 'email'> = ['email'];
 
     if (!name) {
       res.status(400).json({ error: 'Name is required.' });
       return;
     }
-    if (channels.includes('whatsapp') && whatsappNumber.replace(/\D/g, '').length < 10) {
-      res.status(400).json({ error: 'Please enter a valid 10-digit WhatsApp number.' });
-      return;
-    }
-    if (channels.includes('email') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       res.status(400).json({ error: 'Please enter a valid email address for Email Alerts.' });
       return;
     }
@@ -2833,17 +3423,35 @@ async function startServer() {
     }
 
     const db = readDb();
-    const entry: StoredJobAlert = {
-      id: `alert_${crypto.randomUUID().replace(/-/g, '')}`,
-      name,
-      whatsappNumber,
-      email: email || null,
-      channels,
-      city,
-      category,
-      createdAt: new Date().toISOString(),
-    };
-    db.jobAlerts.push(entry);
+    const existingIdx = db.jobAlerts.findIndex(
+      (a) => normalizeEmail(a.email) === email
+    );
+    const nowIso = new Date().toISOString();
+    let entry: StoredJobAlert;
+
+    if (existingIdx !== -1) {
+      entry = {
+        ...db.jobAlerts[existingIdx],
+        name,
+        email,
+        channels,
+        city,
+        category,
+      };
+      db.jobAlerts[existingIdx] = entry;
+    } else {
+      entry = {
+        id: `alert_${crypto.randomUUID().replace(/-/g, '')}`,
+        name,
+        whatsappNumber: '',
+        email: email || null,
+        channels,
+        city,
+        category,
+        createdAt: nowIso,
+      };
+      db.jobAlerts.push(entry);
+    }
 
     // Sync alert preferences if viewer is logged in
     const loggedInId = getOptionalAuthenticatedCandidateId(req, db);
@@ -2852,67 +3460,141 @@ async function startServer() {
       if (cIdx !== -1) {
         db.candidates[cIdx] = {
           ...db.candidates[cIdx],
-          whatsappAlertsEnabled: channels.includes('whatsapp')
-            ? true
-            : Boolean(db.candidates[cIdx].whatsappAlertsEnabled),
-          emailNotificationsEnabled: channels.includes('email')
-            ? true
-            : Boolean(db.candidates[cIdx].emailNotificationsEnabled),
-          whatsappNumber: whatsappNumber || db.candidates[cIdx].whatsappNumber,
+          emailNotificationsEnabled: true,
           alertCity: city,
           alertCategory: category,
         };
       }
     }
 
-    let emailDispatch: StoredEmailDispatch | null = null;
-    if (channels.includes('email') && email) {
-      emailDispatch = await dispatchPortalEmail({
-        db,
-        type: 'job-alert',
-        fromDisplayName: 'Vardhman Consultancy Services',
-        to: email,
-        cc: null,
-        replyTo: VCS_OFFICIAL_EMAIL,
-        subject: `Job Alert Activated: ${category} in ${city} - VCS Portal`,
-        text: [
-          `Dear ${name},`,
-          '',
-          'Your Job Alert subscription on Vardhman Consultancy Services is now active.',
-          '',
-          `Category: ${category}`,
-          `Preferred City: ${city}`,
-          `Channels Enabled: ${channels.map((c) => (c === 'whatsapp' ? 'WhatsApp' : 'Email')).join(', ')}`,
-          '',
-          'You will receive updates as soon as matching verified mandates are published.',
-          '',
-          'Regards,',
-          'Vardhman Consultancy Services (Est. 2012)',
-          'Email: info@vardhmanconsultancy.com',
-          'WhatsApp & Helpline: 7877250630',
-        ].join('\n'),
-        relatedEntityId: entry.id,
-      });
-    }
+    const allApprovedJobs = normalizeAlertJobsList(body.jobs, db);
+    const matchedJobs = findMatchingJobsForAlert(allApprovedJobs, city, category).slice(0, 6);
+    const matchedBlock = formatAlertJobsEmailBlock(matchedJobs);
+
+    const emailDispatch = await dispatchPortalEmail({
+      db,
+      type: 'job-alert',
+      fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+      to: email,
+      cc: null,
+      replyTo: VCS_OFFICIAL_EMAIL,
+      subject:
+        matchedJobs.length > 0
+          ? `Job Alert Activated (${matchedJobs.length} Matching Jobs): ${category} in ${city} - JobsNia.com`
+          : `Job Alert Activated: ${category} in ${city} - JobsNia.com`,
+      text: [
+        `Dear ${name},`,
+        '',
+        'Your Email Job Alert subscription on JobsNia.com (Vardhman Consultancy Services) is now active.',
+        '',
+        `Category: ${category}`,
+        `Preferred City: ${city}`,
+        'Channel Enabled: Email',
+        '',
+        matchedJobs.length > 0
+          ? `=== CURRENTLY MATCHING VERIFIED OPENINGS (${matchedJobs.length}) ===`
+          : '=== OPENINGS STATUS ===',
+        matchedBlock,
+        '',
+        'You will continue receiving automatic email alerts whenever new matching roles are approved and published.',
+        '',
+        'Regards,',
+        'JobsNia.com — Vardhman Consultancy Services (Est. 2012)',
+        'Email: info@vardhmanconsultancy.com',
+      ].join('\n'),
+      relatedEntityId: entry.id,
+    });
 
     writeDb(db);
 
     res.status(201).json({
       alert: entry,
       emailDispatch,
-      message: channels.includes('whatsapp') && channels.includes('email')
-        ? 'You Will Get Job Alerts On WhatsApp & Email'
-        : channels.includes('email')
-          ? 'Email Job Alert Subscription Activated'
-          : 'You Will Get Job Alerts On WhatsApp',
+      matchedJobsCount: matchedJobs.length,
+      matchedJobsPreview: matchedJobs.map((j) => ({
+        id: j.id,
+        title: j.title,
+        location: j.location,
+        salary: j.salary,
+      })),
+      message:
+        matchedJobs.length > 0
+          ? `Email Job Alert Activated — ${matchedJobs.length} matching job(s) included in your email.`
+          : 'Email Job Alert Subscription Activated',
     });
   });
 
-  // Contact Us Inquiry Submission (+ Email to Admin with CC to info@vardhmanconsultancy.com)
+  // Candidate: Send Instant Job Alert Email Digest
+  app.post(
+    '/api/candidate/job-alerts/send-digest',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      if (!req.candidate) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+      if (!req.candidate.email) {
+        res.status(400).json({ error: 'No email address found on your account.' });
+        return;
+      }
+
+      const body = (req.body || {}) as Record<string, unknown>;
+      const db = readDb();
+      const city = String(
+        body.city ?? req.candidate.alertCity ?? req.candidate.preferredLocation ?? req.candidate.city ?? 'Pan India'
+      ).trim();
+      const category = String(
+        body.category ?? req.candidate.alertCategory ?? req.candidate.preferredRole ?? req.candidate.designation ?? 'Pharmaceutical'
+      ).trim();
+
+      const allApprovedJobs = normalizeAlertJobsList(body.jobs, db);
+      const matchedJobs = findMatchingJobsForAlert(allApprovedJobs, city, category).slice(0, 6);
+
+      const emailDispatch = await dispatchPortalEmail({
+        db,
+        type: 'job-alert',
+        fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+        to: req.candidate.email,
+        cc: null,
+        replyTo: VCS_OFFICIAL_EMAIL,
+        subject:
+          matchedJobs.length > 0
+            ? `Your JobsNia Digest: ${matchedJobs.length} Verified ${category} Role(s) in ${city}`
+            : `Your JobsNia Job Alert Digest: ${category} in ${city}`,
+        text: [
+          `Dear ${req.candidate.name},`,
+          '',
+          `Here is your requested Job Alert Digest from JobsNia.com for ${category} (${city}):`,
+          '',
+          formatAlertJobsEmailBlock(matchedJobs),
+          '',
+          'Log in to your Candidate Dashboard anytime to apply in one click.',
+          '',
+          'Warm Regards,',
+          'JobsNia.com — Vardhman Consultancy Services (Est. 2012)',
+          'Email: info@vardhmanconsultancy.com',
+        ].join('\n'),
+        relatedEntityId: req.candidate.id,
+      });
+
+      writeDb(db);
+
+      res.json({
+        emailDispatch,
+        matchedJobsCount: matchedJobs.length,
+        message:
+          emailDispatch.deliveredVia === 'smtp'
+            ? `Job Alert Digest emailed to ${req.candidate.email} with ${matchedJobs.length} matching role(s).`
+            : `Job Alert Digest queued for ${req.candidate.email} with ${matchedJobs.length} matching role(s).`,
+      });
+    }
+  );
+
+  // Contact Us Inquiry Submission (+ Email to cvforvcs@gmail.com with CC to info@vardhmanconsultancy.com)
   app.post('/api/contact', async (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const name = String(body.name ?? '').trim();
-    const email = normalizeEmail(body.email);
+    const rawEmail = normalizeEmail(body.email);
     const phone = String(body.phone ?? '').trim();
     const companyName = String(body.companyName ?? '').trim();
     const message = String(body.message ?? '').trim();
@@ -2921,8 +3603,8 @@ async function startServer() {
       res.status(400).json({ error: 'Please enter your name.' });
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      res.status(400).json({ error: 'Please enter a valid Official Email ID.' });
+    if (rawEmail && rawEmail !== 'not provided' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      res.status(400).json({ error: 'Please enter a valid email address.' });
       return;
     }
     if (phone.replace(/\D/g, '').length < 10) {
@@ -2934,11 +3616,16 @@ async function startServer() {
       return;
     }
 
+    const effectiveEmail =
+      rawEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)
+        ? rawEmail
+        : 'Not provided';
+
     const db = readDb();
     const entry: StoredContactInquiry = {
       id: `contact_${crypto.randomUUID().replace(/-/g, '')}`,
       name,
-      email,
+      email: effectiveEmail,
       phone,
       companyName: companyName || null,
       message,
@@ -2947,17 +3634,17 @@ async function startServer() {
     db.contacts.push(entry);
 
     const contactEmailText = [
-      'New Contact Form Inquiry - Vardhman Consultancy Services',
+      'NEW INQUIRY / COMPANY & CLIENT MESSAGE - JOBSNIA.COM (VARDHMAN CONSULTANCY SERVICES)',
       '',
-      '=== APPLICANT DETAILS ===',
+      '=== COMPLETE CONTACT DETAILS ===',
       `Inquiry ID: ${entry.id}`,
       `Name: ${entry.name}`,
-      `Official Email: ${entry.email}`,
-      `Phone: ${entry.phone}`,
+      `Email Address: ${entry.email}`,
+      `Mobile Number: ${entry.phone}`,
       `Company Name: ${companyName || 'Individual / Candidate'}`,
       `Submitted At: ${entry.createdAt}`,
       '',
-      'Message:',
+      'Full Message / Requirement:',
       entry.message,
     ].join('\n');
 
@@ -2968,9 +3655,9 @@ async function startServer() {
       type: 'contact-inquiry',
       fromDisplayName: contactDisplayLabel,
       to: DESIGNATED_ADMIN_EMAIL,
-      cc: VCS_OFFICIAL_EMAIL,
-      replyTo: entry.email,
-      subject: `Contact Form Inquiry: ${contactDisplayLabel} - Vardhman Consultancy Services`,
+      cc: ADMIN_NOTIFICATION_CC,
+      replyTo: effectiveEmail !== 'Not provided' ? effectiveEmail : VCS_OFFICIAL_EMAIL,
+      subject: `Portal Inquiry: ${contactDisplayLabel} - JobsNia.com`,
       text: contactEmailText,
       relatedEntityId: entry.id,
     });
@@ -2979,8 +3666,7 @@ async function startServer() {
 
     res.status(201).json({
       contact: entry,
-      message:
-        'Email Sent Successfully. Your inquiry has been sent to Admin with CC to info@vardhmanconsultancy.com.',
+      message: 'Inquiry submitted and emailed successfully.',
       emailDispatch,
     });
   });
@@ -3545,7 +4231,7 @@ async function startServer() {
     }
   });
 
-  // AI Interview Prep Coach (Bilingual English + Hindi)
+  // AI Interview Prep Coach (100% Pure International English)
   app.post('/api/ai/interview-coach', async (req: Request, res: Response) => {
     try {
       const body = (req.body || {}) as Record<string, unknown>;
@@ -3558,7 +4244,7 @@ async function startServer() {
         `Prepare a focused interview coaching brief for the role: "${roleTitle}".`,
         skills ? `Key Skills: ${skills}` : '',
         experience ? `Experience Level: ${experience}` : '',
-        'Include: roleTitle, keyTopics (4 items), questionsAndAnswers (4 likely interview questions, each with a concise englishTip and practical hindiTip in Devanagari Hindi), and closingChecklist (3 short action items).',
+        'Include: roleTitle, keyTopics (4 items), questionsAndAnswers (4 likely interview questions, each with a concise englishTip explaining the strategy and a practical hindiTip containing a crisp, sample spoken phrasing/action takeaway written strictly in polished International English — do NOT use any Hindi words), and closingChecklist (3 short action items). Write everything strictly in English.',
       ]
         .filter(Boolean)
         .join('\n');
@@ -3568,7 +4254,7 @@ async function startServer() {
         contents: prompt,
         config: {
           systemInstruction:
-            'You are a senior career mentor at Vardhman Consultancy Services. Keep answers encouraging, realistic, and concise.',
+            'You are a senior career mentor at Vardhman Consultancy Services / JobsNia.com. Keep all output strictly in polished, world-class International English.',
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -3645,12 +4331,241 @@ async function startServer() {
     }
   });
 
+  // AI Career Copilot (Natural-Language Job Finder & Filter Extractor)
+  app.post('/api/ai/career-copilot', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const query = String(body.query ?? '').trim();
+      const rawJobs = Array.isArray(body.jobs) ? body.jobs : [];
+      const candidateInfo = (body.candidate || {}) as Record<string, unknown>;
+
+      if (!query) {
+        res.status(400).json({ error: 'Please describe the role, skill, or city you are looking for.' });
+        return;
+      }
+
+      const compactJobs = rawJobs
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+        .slice(0, 60)
+        .map((j) => ({
+          id: String(j.id ?? ''),
+          title: String(j.title ?? ''),
+          designation: String(j.designation ?? ''),
+          location: String(j.location ?? ''),
+          experience: String(j.experience ?? ''),
+          salary: String(j.salary ?? ''),
+          qualification: String(j.qualification ?? ''),
+          skills: Array.isArray(j.skills) ? j.skills.slice(0, 6).map(String) : [],
+        }))
+        .filter((j) => j.id && j.title);
+
+      const validIds = new Set(compactJobs.map((j) => j.id));
+
+      const ai = getGeminiAiClient();
+      const prompt = [
+        `USER REQUEST: "${query.slice(0, 500)}"`,
+        candidateInfo.name
+          ? `CANDIDATE CONTEXT: Role=${String(candidateInfo.preferredRole || candidateInfo.designation || '')}, Exp=${String(candidateInfo.experience || '')}, City=${String(candidateInfo.city || '')}, Skills=${Array.isArray(candidateInfo.keySkills) ? candidateInfo.keySkills.join(', ') : ''}`
+          : '',
+        compactJobs.length > 0
+          ? `ACTIVE VERIFIED JOBS CATALOG (${compactJobs.length} jobs):\n${JSON.stringify(compactJobs)}`
+          : 'ACTIVE VERIFIED JOBS CATALOG: [] (No active jobs supplied)',
+        '',
+        'Instructions:',
+        '1. Recommend up to 4 best matching jobs strictly using exact `id` values from ACTIVE VERIFIED JOBS CATALOG. Never invent job IDs.',
+        '2. Extract clean `suggestedFilters` (`keyword`, `location`, `experience`) for the portal search bar.',
+        '3. Provide 3 concise `suggestedQueries` the job seeker can click next.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'You are JobsNia AI Career Copilot for Vardhman Consultancy Services (Healthcare, Pharma, Hospitals, IT & Corporate Recruitment in India). Be accurate, helpful, concise, and never fabricate job listings.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              recommendations: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    jobId: { type: Type.STRING },
+                    fitScore: { type: Type.INTEGER },
+                    reason: { type: Type.STRING },
+                  },
+                },
+              },
+              suggestedFilters: {
+                type: Type.OBJECT,
+                properties: {
+                  keyword: { type: Type.STRING },
+                  location: { type: Type.STRING },
+                  experience: { type: Type.STRING },
+                },
+              },
+              suggestedQueries: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+      const rawRecs = Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
+      const recommendations = rawRecs
+        .map((r) => r as Record<string, unknown>)
+        .filter((r) => validIds.has(String(r.jobId ?? '')))
+        .slice(0, 4)
+        .map((r) => ({
+          jobId: String(r.jobId),
+          fitScore: Math.max(40, Math.min(99, Number(r.fitScore) || 78)),
+          reason: String(r.reason ?? 'Strong role and skill alignment.'),
+        }));
+
+      const sf = (parsed.suggestedFilters || {}) as Record<string, unknown>;
+      res.json({
+        summary: String(parsed.summary ?? ''),
+        recommendations,
+        suggestedFilters: {
+          keyword: String(sf.keyword ?? ''),
+          location: String(sf.location ?? ''),
+          experience: String(sf.experience ?? ''),
+        },
+        suggestedQueries: Array.isArray(parsed.suggestedQueries)
+          ? parsed.suggestedQueries.map(String).filter(Boolean).slice(0, 3)
+          : [],
+      });
+    } catch (err) {
+      const info = extractGeminiErrorMessage(err);
+      res.status(info.status).json({ error: info.message });
+    }
+  });
+
+  // AI Cover Note & Recruiter Pitch Generator
+  app.post('/api/ai/cover-letter', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const job = (body.job || {}) as Record<string, unknown>;
+      const candidateInfo = (body.candidate || {}) as Record<string, unknown>;
+      const tone = String(body.tone ?? 'Professional').trim();
+
+      const jobTitle = String(job.title ?? job.jobTitle ?? '').trim();
+      if (!jobTitle) {
+        res.status(400).json({ error: 'Job title is required to draft a cover note.' });
+        return;
+      }
+
+      const ai = getGeminiAiClient();
+      const prompt = [
+        `Write a crisp, persuasive ${tone} application cover note / recruiter pitch for the job "${jobTitle}".`,
+        `Job Location: ${String(job.location || 'India')}`,
+        `Experience Required: ${String(job.experience || 'Relevant')}`,
+        `Required Skills: ${Array.isArray(job.skills) ? job.skills.join(', ') : String(job.skills || '')}`,
+        `Job Qualification: ${String(job.qualification || '')}`,
+        '',
+        `Applicant Name: ${String(candidateInfo.name || 'Candidate')}`,
+        `Applicant Qualification/Experience: ${String(candidateInfo.qualificationExperience || candidateInfo.experience || 'Relevant Background')}`,
+        `Applicant City: ${String(candidateInfo.city || 'India')}`,
+        `Applicant Skills: ${Array.isArray(candidateInfo.keySkills) ? candidateInfo.keySkills.join(', ') : String(candidateInfo.keySkills || '')}`,
+        '',
+        'Keep coverNote concise (95-140 words, no placeholders like [Company Name] since recruitment is coordinated via Vardhman Consultancy Services), return JSON with subjectLine, coverNote, and 3 short pitchHighlights.',
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'You are a senior career coach at Vardhman Consultancy Services / JobsNia.com. Produce authentic, clean plain-text cover notes in International English.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              subjectLine: { type: Type.STRING },
+              coverNote: { type: Type.STRING },
+              pitchHighlights: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+      res.json({
+        subjectLine: String(parsed.subjectLine ?? `Application for ${jobTitle}`),
+        coverNote: String(parsed.coverNote ?? ''),
+        pitchHighlights: Array.isArray(parsed.pitchHighlights)
+          ? parsed.pitchHighlights.map(String).filter(Boolean).slice(0, 4)
+          : [],
+      });
+    } catch (err) {
+      const info = extractGeminiErrorMessage(err);
+      res.status(info.status).json({ error: info.message });
+    }
+  });
+
+  // AI Semantic Search Query Expander
+  app.post('/api/ai/search-suggestions', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const query = String(body.query ?? '').trim();
+      const field = body.field === 'location' ? 'location' : 'keyword';
+
+      if (!query || query.length < 2) {
+        res.status(400).json({ error: 'Enter at least 2 characters for AI search suggestions.' });
+        return;
+      }
+
+      const ai = getGeminiAiClient();
+      const prompt =
+        field === 'location'
+          ? `Given the Indian job location query "${query.slice(0, 100)}", suggest 6 closely related Indian cities, industrial hubs (e.g., Baddi, Mumbai, NCR, Hyderabad Pharma City), or work hubs to search for Healthcare, Pharma, and Corporate jobs.`
+          : `Given the Indian job search query "${query.slice(0, 100)}", suggest 6 concise, high-signal related job titles, clinical/pharma specializations, or ATS skill keywords used by Indian recruiters.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'Return JSON with a `suggestions` array of 6 concise strings (2-4 words each). No explanations.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              suggestions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+      res.json({
+        suggestions: Array.isArray(parsed.suggestions)
+          ? parsed.suggestions.map((s) => String(s).trim()).filter(Boolean).slice(0, 6)
+          : [],
+      });
+    } catch (err) {
+      const info = extractGeminiErrorMessage(err);
+      res.status(info.status).json({ error: info.message });
+    }
+  });
+
   // =========================================================================
   // CANDIDATE CAREER TOOLS: Preferences, Search History, Skill Tests,
   // Auto-Apply Mode, Email Notifications & Interview Reminders
   // =========================================================================
 
-  // Update Notification Preferences (Email, WhatsApp Alert, Auto-Apply Config)
+  // Update Notification Preferences (Email & Auto-Apply Config)
   app.put(
     '/api/candidate/preferences',
     requireAuth,
@@ -3672,14 +4587,6 @@ async function startServer() {
         body.emailNotificationsEnabled !== undefined
           ? Boolean(body.emailNotificationsEnabled)
           : Boolean(existing.emailNotificationsEnabled ?? true);
-      const nextWhatsappPref =
-        body.whatsappAlertsEnabled !== undefined
-          ? Boolean(body.whatsappAlertsEnabled)
-          : Boolean(existing.whatsappAlertsEnabled);
-      const nextWhatsappNum =
-        body.whatsappNumber !== undefined
-          ? String(body.whatsappNumber ?? '').trim()
-          : existing.whatsappNumber || existing.phone;
       const nextAlertCity =
         body.alertCity !== undefined
           ? String(body.alertCity ?? '').trim()
@@ -3725,8 +4632,7 @@ async function startServer() {
       db.candidates[idx] = {
         ...existing,
         emailNotificationsEnabled: nextEmailPref,
-        whatsappAlertsEnabled: nextWhatsappPref,
-        whatsappNumber: nextWhatsappNum || null,
+        whatsappAlertsEnabled: false,
         alertCity: nextAlertCity || null,
         alertCategory: nextAlertCategory || null,
         autoApplyConfig: nextAuto,
@@ -3737,23 +4643,23 @@ async function startServer() {
         emailDispatch = await dispatchPortalEmail({
           db,
           type: 'job-alert',
-          fromDisplayName: 'Vardhman Consultancy Services',
+          fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
           to: existing.email,
           cc: null,
           replyTo: VCS_OFFICIAL_EMAIL,
-          subject: 'Email & Career Alert Preferences Updated - VCS Portal',
+          subject: 'Email & Career Alert Preferences Updated - JobsNia.com',
           text: [
             `Dear ${existing.name},`,
             '',
-            'Your notification & career automation preferences on Vardhman Consultancy Services have been updated:',
+            'Your notification & career automation preferences on JobsNia.com (Vardhman Consultancy Services) have been updated:',
             `- Email Notifications: ${nextEmailPref ? 'Enabled' : 'Disabled'}`,
-            `- WhatsApp Alerts: ${nextWhatsappPref ? `Enabled (${nextWhatsappNum || existing.phone})` : 'Disabled'}`,
             `- Auto-Apply Mode: ${nextAuto.enabled ? `Active (Min Smart Match: ${nextAuto.minMatchScore}%)` : 'Off'}`,
             nextAlertCategory ? `- Target Category: ${nextAlertCategory}` : '',
             nextAlertCity ? `- Preferred City: ${nextAlertCity}` : '',
             '',
             'Warm Regards,',
-            'Vardhman Consultancy Services',
+            'JobsNia.com — Vardhman Consultancy Services',
+            'Email: info@vardhmanconsultancy.com',
           ]
             .filter(Boolean)
             .join('\n'),
@@ -4205,7 +5111,7 @@ async function startServer() {
             type: 'candidate-application',
             fromDisplayName: `${candidate.name} (Auto-Apply)`,
             to: DESIGNATED_ADMIN_EMAIL,
-            cc: VCS_OFFICIAL_EMAIL,
+            cc: ADMIN_NOTIFICATION_CC,
             replyTo: candidate.email,
             subject: `Auto-Apply Application: ${newApp.jobTitle} - ${candidate.name}`,
             text: [
@@ -4294,10 +5200,27 @@ async function startServer() {
   );
 
   if (process.env.NODE_ENV !== 'production') {
+    process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'spa',
+    });
+    app.get('/@vite/client', async (_req: Request, res: Response, next) => {
+      try {
+        const result = await vite.transformRequest('/@vite/client');
+        if (!result?.code) {
+          next();
+          return;
+        }
+        const safeCode = result.code.replace(
+          'transport.connect(createHMRHandler(handleMessage));',
+          'transport.connect = async () => {}; transport.disconnect = async () => {}; transport.send = async () => {}; transport.invoke = async () => {};'
+        );
+        res.type('application/javascript').send(safeCode);
+      } catch {
+        next();
+      }
     });
     app.use(vite.middlewares);
   } else {

@@ -1,4 +1,4 @@
-import { Building2, FileCheck2, ShieldCheck, Stethoscope } from 'lucide-react';
+import { Building2, FileCheck2, ShieldCheck, Users } from 'lucide-react';
 
 const SERVICE_BOXES = [
   {
@@ -13,7 +13,7 @@ const SERVICE_BOXES = [
     title: 'Hospital & Clinical Staffing',
     description:
       'Specialized recruitment for Gynecologists, Orthopedicians, Cardiologists, Nephrologists, Oncopathologists, Physicians, and MBBS Doctors.',
-    icon: Stethoscope,
+    icon: Users,
   },
   {
     code: '03.',

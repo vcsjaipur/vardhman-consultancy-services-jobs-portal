@@ -90,15 +90,13 @@ export function ContactUsPage({ onBackHome }: ContactUsPageProps) {
         message: fullQueryMessage,
       });
 
-      if (email.trim()) {
-        void submitContactInquiry({
-          name: name.trim(),
-          email: email.trim(),
-          phone: phone.trim(),
-          companyName: companyName.trim() || undefined,
-          message: message.trim(),
-        }).catch(() => null);
-      }
+      void submitContactInquiry({
+        name: name.trim(),
+        email: email.trim() || undefined,
+        phone: phone.trim(),
+        companyName: companyName.trim() || undefined,
+        message: message.trim(),
+      }).catch(() => null);
 
       clearFormDraft(CONTACT_DRAFT_KEY);
       setSubmittedName(name.trim());
@@ -143,7 +141,7 @@ export function ContactUsPage({ onBackHome }: ContactUsPageProps) {
               Contact Us
             </h1>
             <p className="mt-2 text-sm text-slate-200 leading-relaxed">
-              info@vardhmanconsultancy.com | Mobile &amp; WhatsApp: 7877250630 — Reach out for hiring mandates or career inquiries.
+              info@vardhmanconsultancy.com — Reach out exclusively via portal or email for hiring mandates and career inquiries.
             </p>
           </div>
 
@@ -321,7 +319,7 @@ export function ContactUsPage({ onBackHome }: ContactUsPageProps) {
                     className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-[#063B7A] hover:text-[#0A8E43] transition-colors"
                   >
                     <Mail className="w-4 h-4 text-[#0A8E43] shrink-0" aria-hidden="true" />
-                    <span>info@vardhmanconsultancy.com · Mobile &amp; WhatsApp: 7877250630</span>
+                    <span>info@vardhmanconsultancy.com</span>
                   </a>
 
                   <button

@@ -1,10 +1,34 @@
-import { getApps, initializeApp } from 'firebase/app';
+import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  Firestore,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+function createPersistentFirestore(firebaseApp: FirebaseApp, databaseId: string): Firestore {
+  try {
+    return initializeFirestore(
+      firebaseApp,
+      {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      },
+      databaseId
+    );
+  } catch {
+    return getFirestore(firebaseApp, databaseId);
+  }
+}
+
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = createPersistentFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -24,7 +48,7 @@ const sharedApp =
   getApps().find((existing) => existing.name === SHARED_APP_NAME) ??
   initializeApp(sharedFirebaseConfig, SHARED_APP_NAME);
 
-export const sharedDb = getFirestore(
+export const sharedDb = createPersistentFirestore(
   sharedApp,
   sharedFirebaseConfig.firestoreDatabaseId
 );

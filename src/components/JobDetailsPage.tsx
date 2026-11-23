@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ArrowLeft,
   Award,
+  BadgeCheck,
   Bookmark,
   Briefcase,
   Building2,
@@ -10,8 +11,10 @@ import {
   GraduationCap,
   IndianRupee,
   Loader2,
+  Lock,
   MapPin,
   Send,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import {
@@ -130,6 +133,35 @@ export function JobDetailsPage({
   const shareUrl = buildJobShareUrl(job.id);
   const shareText = `${job.title} (${job.location} · ${job.salary}) via Vardhman Consultancy Services`;
   const smartMatch = computeSmartMatch(job, candidate);
+  const isVerifiedEmployer = job.status !== 'Pending' && job.status !== 'Rejected';
+  const openingsCount = Math.max(
+    1,
+    Number(job.openings ?? job.openingsCount ?? 1) || 1
+  );
+  const applyWindow = (job.lastDateToApply || job.lastDate || '').trim() || 'Open Until Filled';
+  const postedLabel = (() => {
+    const raw = (job.postedAt || job.createdAt || '').trim();
+    if (!raw) return 'Recently Verified';
+    const parsed = Date.parse(raw);
+    if (Number.isNaN(parsed)) return raw;
+    return new Date(parsed).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  })();
+
+  const handleScrollToVerifiedBadge = () => {
+    const el = document.getElementById('verified-employer-badge');
+    if (!el) return;
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+      block: 'center',
+    });
+  };
 
   const handleAnalyzeFit = async () => {
     setAiFitLoading(true);
@@ -295,6 +327,28 @@ export function JobDetailsPage({
                     <Building2 className="w-4 h-4 text-[#9A6F04] shrink-0" aria-hidden="true" />
                     <span>{companyOrHospitalName}</span>
                   </span>
+
+                  <span aria-hidden="true" className="text-slate-300 hidden sm:inline">
+                    ·
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={handleScrollToVerifiedBadge}
+                    className={`inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-sm ${
+                      isVerifiedEmployer ? 'text-[#065F2C]' : 'text-[#9A6F04]'
+                    }`}
+                  >
+                    <BadgeCheck
+                      className={`w-4 h-4 shrink-0 ${
+                        isVerifiedEmployer ? 'text-[#0A8E43]' : 'text-[#9A6F04]'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {isVerifiedEmployer ? 'Verified Employer' : 'Verification Pending'}
+                    </span>
+                  </button>
 
                   <span aria-hidden="true" className="text-slate-300 hidden sm:inline">
                     ·
@@ -590,7 +644,7 @@ export function JobDetailsPage({
                           <span className="font-semibold">Tip:</span> {qa.englishTip}
                         </p>
                         <p className="text-slate-600">
-                          <span className="font-semibold">Hindi Guide:</span> {qa.hindiTip}
+                          <span className="font-semibold">Action Step:</span> {qa.hindiTip}
                         </p>
                       </div>
                     ))}
@@ -600,25 +654,185 @@ export function JobDetailsPage({
             </section>
           </div>
 
-          {/* Right Apply Sidebar */}
-          <aside className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl shadow-md p-5 sm:p-6">
-            <h2 className="font-display text-lg font-bold text-[#062856]">
-              Apply for this Position
-            </h2>
-            <p className="mt-1.5 text-xs sm:text-sm text-slate-600">
-              {companyOrHospitalName}
-            </p>
+          {/* Right Apply & Verified Employer Trust Sidebar */}
+          <aside className="lg:col-span-4 space-y-6">
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-md p-5 sm:p-6">
+              <h2 className="font-display text-lg font-bold text-[#062856]">
+                Apply for this Position
+              </h2>
+              <p className="mt-1 text-xs sm:text-sm text-slate-600">
+                {companyOrHospitalName}
+              </p>
 
-            <div className="mt-5">
-              <button
-                type="button"
-                onClick={() => onApplyJob(job)}
-                className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
-              >
-                <Send className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
-                <span>Apply Now</span>
-              </button>
+              <dl className="mt-4 pt-4 border-t border-slate-100 space-y-2.5 text-xs sm:text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Openings</dt>
+                  <dd className="font-semibold text-[#062856] tabular-nums">
+                    {openingsCount} {openingsCount === 1 ? 'Position' : 'Positions'}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Employment Type</dt>
+                  <dd className="font-semibold text-[#062856]">
+                    {job.jobType || 'Full-Time'}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Apply Window</dt>
+                  <dd className="font-semibold text-[#062856] tabular-nums">
+                    {applyWindow}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={() => onApplyJob(job)}
+                  className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856]"
+                >
+                  <Send className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
+                  <span>Apply Now</span>
+                </button>
+              </div>
             </div>
+
+            {/* Verified Employer Badge Section */}
+            <section
+              id="verified-employer-badge"
+              aria-labelledby="verified-employer-heading"
+              className="bg-white border border-slate-200 rounded-2xl shadow-xs p-5 sm:p-6"
+            >
+              <div className="flex items-start gap-3.5">
+                <div
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                    isVerifiedEmployer
+                      ? 'bg-[#062856] text-[#F6D574]'
+                      : 'bg-[#FBF4DC] text-[#9A6F04] border border-[#D4AF37]/40'
+                  }`}
+                >
+                  <ShieldCheck className="w-6 h-6" aria-hidden="true" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <h2
+                      id="verified-employer-heading"
+                      className="font-display text-base sm:text-lg font-bold text-[#062856] leading-snug"
+                    >
+                      {isVerifiedEmployer ? 'Verified Employer' : 'Employer Verification'}
+                    </h2>
+                    <BadgeCheck
+                      className={`w-5 h-5 shrink-0 ${
+                        isVerifiedEmployer ? 'text-[#0A8E43]' : 'text-[#9A6F04]'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <p className="mt-0.5 text-xs font-medium text-slate-600">
+                    {isVerifiedEmployer
+                      ? 'Screened & authenticated by Vardhman Consultancy Services'
+                      : 'Pending final VCS compliance review before public activation'}
+                  </p>
+                </div>
+              </div>
+
+              <ul className="mt-4 pt-4 border-t border-slate-100 space-y-3 text-xs sm:text-sm text-slate-700">
+                <li className="flex items-start gap-2.5">
+                  <CheckCircle2
+                    className="w-4 h-4 text-[#0A8E43] shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="font-semibold text-[#062856]">
+                      Business &amp; Tax Credentials Checked
+                    </p>
+                    <p className="text-xs text-slate-600 leading-relaxed mt-0.5">
+                      Employer identity, GST/PAN registration, and mandate authorization verified prior to listing.
+                    </p>
+                  </div>
+                </li>
+
+                <li className="flex items-start gap-2.5">
+                  <CheckCircle2
+                    className="w-4 h-4 text-[#0A8E43] shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="font-semibold text-[#062856]">
+                      Confirmed Active Hiring Mandate
+                    </p>
+                    <p className="text-xs text-slate-600 leading-relaxed mt-0.5">
+                      Validated directly with the hiring team for {openingsCount}{' '}
+                      {openingsCount === 1 ? 'active vacancy' : 'active vacancies'}.
+                    </p>
+                  </div>
+                </li>
+
+                <li className="flex items-start gap-2.5">
+                  <CheckCircle2
+                    className="w-4 h-4 text-[#0A8E43] shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="font-semibold text-[#062856]">
+                      Zero Candidate Placement Fees
+                    </p>
+                    <p className="text-xs text-slate-600 leading-relaxed mt-0.5">
+                      100% free direct application with no charges or hidden deductions for job seekers.
+                    </p>
+                  </div>
+                </li>
+              </ul>
+
+              <dl className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Hiring Entity</dt>
+                  <dd className="font-semibold text-[#062856] text-right truncate max-w-[190px]">
+                    {companyOrHospitalName}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Verification Status</dt>
+                  <dd
+                    className={`font-bold inline-flex items-center gap-1 ${
+                      isVerifiedEmployer ? 'text-[#065F2C]' : 'text-[#9A6F04]'
+                    }`}
+                  >
+                    <BadgeCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>{isVerifiedEmployer ? 'Verified Active' : 'Pending Review'}</span>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Posted Date</dt>
+                  <dd className="font-semibold text-[#062856] tabular-nums">
+                    {postedLabel}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-slate-500">Candidate Cost</dt>
+                  <dd className="font-semibold text-[#065F2C]">
+                    Free Direct Apply
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-4 pt-4 border-t border-slate-100 space-y-2.5">
+                <p className="text-xs text-slate-600 flex items-start gap-2 leading-relaxed">
+                  <Lock className="w-3.5 h-3.5 text-[#062856] shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>
+                    Your resume and contact details are shared confidentially only with authorized hiring leads for this mandate.
+                  </span>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onOpenModal('contact')}
+                  className="text-xs font-semibold text-[#062856] hover:text-[#9A6F04] underline underline-offset-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#062856] rounded-sm"
+                >
+                  Questions about this employer? Contact VCS Support
+                </button>
+              </div>
+            </section>
           </aside>
         </div>
       </div>

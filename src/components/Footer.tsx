@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { ExternalLink, FileUp, Linkedin, Mail, MessageCircle, Radio } from 'lucide-react';
+import { ExternalLink, FileUp, Linkedin, Mail } from 'lucide-react';
 import {
   FOOTER_SOCIAL_LINKS,
   OFFICIAL_EMAIL,
-  OFFICIAL_PHONE_DISPLAY,
 } from '../utils/jobHelpers';
-import { LOGO_SRC } from './Header';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 interface FooterProps {
   onNavigateHome: () => void;
+  onNavigateAbout?: () => void;
   onNavigateSearchJobs: () => void;
   onNavigateVcsInsights: () => void;
   onNavigateBuildResume: () => void;
@@ -20,6 +20,7 @@ interface FooterProps {
 
 export function Footer({
   onNavigateHome,
+  onNavigateAbout,
   onNavigateSearchJobs,
   onNavigateVcsInsights,
   onNavigateBuildResume,
@@ -31,11 +32,13 @@ export function Footer({
   const [logoError, setLogoError] = useState(false);
   const currentYear = new Date().getFullYear();
 
-  const secondaryLinks = [
-    { label: 'Search Jobs', action: onNavigateSearchJobs },
-    { label: 'VCS Insights', action: onNavigateVcsInsights },
+  const quickLinks = [
+    { label: 'Home', action: onNavigateHome },
+    { label: 'Jobs', action: onNavigateSearchJobs },
+    { label: 'About Us', action: onNavigateAbout || onNavigateHome },
     { label: 'Build Resume', action: onNavigateBuildResume },
     { label: 'Interview Tips', action: onNavigateInterviewTips },
+    { label: 'VCS Insights', action: onNavigateVcsInsights },
     { label: 'Terms & Conditions', action: onNavigateJobSeekerTerms },
     { label: 'Contact Us', action: onNavigateContactUs },
   ];
@@ -52,19 +55,20 @@ export function Footer({
                 e.preventDefault();
                 onNavigateHome();
               }}
-              className="inline-flex items-center bg-white rounded-xl px-3 py-1.5 w-fit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]"
+              className="inline-flex items-center bg-white rounded-xl px-3.5 py-2 shadow-sm w-fit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]"
             >
               {!logoError ? (
                 <img
-                  src={LOGO_SRC}
-                  alt="Vardhman Consultancy Services"
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
                   referrerPolicy="no-referrer"
+                  decoding="sync"
                   onError={() => setLogoError(true)}
-                  className="h-12 w-auto object-contain"
+                  className="h-20 sm:h-24 w-auto object-contain select-none"
                 />
               ) : (
                 <span className="font-display font-bold text-base text-[#062856]">
-                  Vardhman Consultancy Services
+                  JobsNia.com
                 </span>
               )}
             </a>
@@ -89,7 +93,7 @@ export function Footer({
             </div>
           </div>
 
-          {/* Clickable Social & WhatsApp Links */}
+          {/* Clickable Social Link */}
           <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
             <a
               href={FOOTER_SOCIAL_LINKS.linkedin}
@@ -101,47 +105,89 @@ export function Footer({
               <span>LinkedIn</span>
               <ExternalLink className="w-3 h-3 text-slate-400" aria-hidden="true" />
             </a>
-
-            <a
-              href={FOOTER_SOCIAL_LINKS.whatsappChannel}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-h-[40px] px-3.5 py-2 rounded-lg bg-white/8 hover:bg-white/15 border border-white/15 text-xs sm:text-sm font-semibold text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-            >
-              <Radio className="w-4 h-4 text-[#F6D574] shrink-0" aria-hidden="true" />
-              <span>WhatsApp Channel</span>
-              <ExternalLink className="w-3 h-3 text-slate-400" aria-hidden="true" />
-            </a>
-
-            <a
-              href={FOOTER_SOCIAL_LINKS.whatsappChat}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-h-[40px] px-3.5 py-2 rounded-lg bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 border border-[#D4AF37]/50 text-xs sm:text-sm font-semibold text-[#F6D574] inline-flex items-center gap-2 transition-colors whitespace-nowrap tabular-nums"
-            >
-              <MessageCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>WhatsApp Chat ({OFFICIAL_PHONE_DISPLAY})</span>
-            </a>
           </div>
         </div>
 
-        {/* Compact Secondary Portal Links + Copyright */}
-        <div className="pt-6 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs text-slate-300">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            {secondaryLinks.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={item.action}
-                className="text-slate-300 hover:text-[#F6D574] font-medium transition-colors cursor-pointer whitespace-nowrap"
+        {/* About, Quick Links & Contact Structured Columns */}
+        <div className="py-8 grid grid-cols-1 md:grid-cols-12 gap-8 border-b border-white/12 text-xs sm:text-sm">
+          <div className="md:col-span-5 space-y-2.5">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#F6D574]">
+              About JobsNia.com
+            </h2>
+            <p className="text-slate-300 leading-relaxed max-w-md">
+              JobsNia.com is a venture of Vardhman Consultancy Services (VCS) - a professionally managed recruitment &amp; placement consultant from Jaipur, Rajasthan. Founded in 2012, headed by Mr. Vikas Jain. We help you find the Right People for the Right Jobs on the Right Time. Whatever we do, we do 100%
+            </p>
+            <p className="text-slate-300 leading-relaxed flex flex-col items-start gap-1">
+              <a
+                href="https://www.jobsnia.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white hover:text-[#F6D574] font-semibold underline underline-offset-2 transition-colors"
               >
-                {item.label}
-              </button>
-            ))}
+                www.jobsnia.com
+              </a>
+              <a
+                href="https://www.vardhmanconsultancy.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white hover:text-[#F6D574] font-semibold underline underline-offset-2 transition-colors"
+              >
+                www.vardhmanconsultancy.com
+              </a>
+            </p>
           </div>
 
-          <p className="text-slate-400 whitespace-nowrap">
-            © {currentYear} Vardhman Consultancy Services
+          <div className="md:col-span-4 space-y-2.5">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#F6D574]">
+              Quick Links
+            </h2>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {quickLinks.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={item.action}
+                  className="text-left text-slate-300 hover:text-[#F6D574] font-medium transition-colors cursor-pointer"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="md:col-span-3 space-y-2.5">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#F6D574]">
+              Contact Desk
+            </h2>
+            <p className="text-slate-300">
+              Official Email:{' '}
+              <a
+                href={`mailto:${OFFICIAL_EMAIL}`}
+                className="text-white hover:text-[#F6D574] font-semibold underline-offset-2 hover:underline"
+              >
+                {OFFICIAL_EMAIL}
+              </a>
+            </p>
+            <p className="text-slate-300">
+              All inquiries, applications &amp; hiring mandates are processed securely through the portal.
+            </p>
+            <button
+              type="button"
+              onClick={onNavigateContactUs}
+              className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-[#F6D574] hover:underline cursor-pointer"
+            >
+              <span>Open Inquiry Form</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Copyright Row */}
+        <div className="pt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
+          <p>
+            © {currentYear} JobsNia.com · A Venture of Vardhman Consultancy Services. All Rights Reserved.
+          </p>
+          <p className="text-slate-400">
+            100% Free Placement Services for Every Candidate · Jaipur, India
           </p>
         </div>
       </div>

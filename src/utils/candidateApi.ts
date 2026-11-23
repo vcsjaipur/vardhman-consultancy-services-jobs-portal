@@ -1,5 +1,8 @@
 import {
   AcademicEntry,
+  AdminJobAlertsOverview,
+  AiCareerCopilotResponse,
+  AiCoverLetterResponse,
   AiInterviewCoachResponse,
   AiJobAnalysis,
   AiResumeAssistResponse,
@@ -9,6 +12,7 @@ import {
   InsightCategory,
   InsightPost,
   InterviewReminder,
+  JobAlertPreviewJob,
   JobApplication,
   JobListing,
   SearchHistoryItem,
@@ -17,8 +21,14 @@ import {
   UserRole,
   WorkExperienceEntry,
 } from '../types/portal';
+import {
+  enqueueOfflineApiRequest,
+  isOfflineOrNetworkError,
+  registerOfflineAuthProviders,
+} from './offlineSyncManager';
 
 const TOKEN_STORAGE_KEY = 'vcs_candidate_session_token';
+const PROFILE_CACHE_KEY = 'vcs_cached_candidate_profile_v1';
 const VISITOR_ID_STORAGE_KEY = 'vcs_visitor_client_id';
 export const MAX_RESUME_BYTES = 10 * 1024 * 1024; // 10 MB
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -85,17 +95,45 @@ export function getStoredToken(): string | null {
   }
 }
 
+export function getCachedCandidateProfile(): CandidateProfile | null {
+  try {
+    const token = getStoredToken();
+    if (!token) return null;
+    const raw = window.localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CandidateProfile | null;
+    return parsed && typeof parsed.id === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedCandidateProfile(profile: CandidateProfile | null): void {
+  try {
+    if (profile) {
+      window.localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+    } else {
+      window.localStorage.removeItem(PROFILE_CACHE_KEY);
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export function setStoredToken(token: string | null): void {
   try {
     if (token) {
       window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
     } else {
       window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(PROFILE_CACHE_KEY);
     }
   } catch {
     // Ignore storage quota errors
   }
 }
+
+registerOfflineAuthProviders(getStoredToken, getOrCreateVisitorId);
 
 export async function readResumeFileAsBase64(
   file: File
@@ -274,6 +312,7 @@ export async function registerCandidate(
     false
   );
   setStoredToken(result.token);
+  setCachedCandidateProfile(result.candidate);
   return result;
 }
 
@@ -291,6 +330,7 @@ export async function loginCandidate(
     false
   );
   setStoredToken(result.token);
+  setCachedCandidateProfile(result.candidate);
   return result;
 }
 
@@ -308,14 +348,29 @@ export async function loginCandidateWithPin(
     false
   );
   setStoredToken(result.token);
+  setCachedCandidateProfile(result.candidate);
   return result;
 }
 
 export async function sendAuthOtp(
   target: string,
   purpose: 'register' | 'login' | 'reset'
-): Promise<{ sent: boolean; targetDisplay: string; verificationCode: string; message: string }> {
-  return apiRequest<{ sent: boolean; targetDisplay: string; verificationCode: string; message: string }>(
+): Promise<{
+  sent: boolean;
+  targetDisplay: string;
+  deliveredVia?: 'smtp' | 'queued';
+  verificationCode?: string;
+  expiresInSeconds?: number;
+  message: string;
+}> {
+  return apiRequest<{
+    sent: boolean;
+    targetDisplay: string;
+    deliveredVia?: 'smtp' | 'queued';
+    verificationCode?: string;
+    expiresInSeconds?: number;
+    message: string;
+  }>(
     '/api/auth/otp/send',
     {
       method: 'POST',
@@ -353,6 +408,7 @@ export async function loginCandidateWithOtp(
     false
   );
   setStoredToken(result.token);
+  setCachedCandidateProfile(result.candidate);
   return result;
 }
 
@@ -360,7 +416,7 @@ export async function resetCandidateCredentials(payload: {
   target: string;
   otp: string;
   newPassword: string;
-  newPin: string;
+  newPin?: string;
 }): Promise<{ reset: boolean; message: string }> {
   return apiRequest<{ reset: boolean; message: string }>(
     '/api/auth/reset-credentials',
@@ -388,6 +444,7 @@ export async function loginWithGoogleToken(
     false
   );
   setStoredToken(result.token);
+  setCachedCandidateProfile(result.candidate);
   return result;
 }
 
@@ -396,10 +453,14 @@ export async function fetchCurrentCandidate(): Promise<CandidateProfile | null> 
   if (!token) return null;
   try {
     const result = await apiRequest<{ candidate: CandidateProfile }>('/api/auth/me');
+    setCachedCandidateProfile(result.candidate);
     return result.candidate;
-  } catch {
-    setStoredToken(null);
-    return null;
+  } catch (err) {
+    if (err instanceof ApiRequestError && err.status === 401) {
+      setStoredToken(null);
+      return null;
+    }
+    return getCachedCandidateProfile();
   }
 }
 
@@ -414,6 +475,7 @@ export async function uploadCandidateResume(
       body: JSON.stringify({ resumeFileName, resumeBase64 }),
     }
   );
+  setCachedCandidateProfile(result.candidate);
   return result.candidate;
 }
 
@@ -464,6 +526,7 @@ export async function updateCandidateProfile(
       }),
     }
   );
+  setCachedCandidateProfile(result.candidate);
   return result.candidate;
 }
 
@@ -478,6 +541,7 @@ export async function uploadCandidatePhoto(payload: {
       body: JSON.stringify(payload),
     }
   );
+  setCachedCandidateProfile(result.candidate);
   return result.candidate;
 }
 
@@ -509,14 +573,50 @@ export interface SubmitApplicationPayload {
 export async function submitJobApplication(
   payload: SubmitApplicationPayload
 ): Promise<JobApplication> {
-  const result = await apiRequest<{
-    application: JobApplication;
-    emailDispatch?: EmailDispatchSummary;
-  }>('/api/applications', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return result.application;
+  try {
+    const result = await apiRequest<{
+      application: JobApplication;
+      emailDispatch?: EmailDispatchSummary;
+    }>('/api/applications', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return result.application;
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        id: payload.id,
+        url: '/api/applications',
+        body: payload,
+        includeAuth: true,
+        label: `Candidate Application: ${payload.applicantName}`,
+      });
+      return {
+        id: payload.id || `offline_app_${Date.now()}`,
+        candidateId: 'offline_queued',
+        jobId: payload.jobId,
+        jobTitle: payload.jobTitle,
+        companyMasked: payload.companyMasked,
+        location: payload.location,
+        salary: payload.salary,
+        experience: payload.experience,
+        city: payload.city || payload.location,
+        qualificationExperience: payload.qualificationExperience,
+        resumeSummary: payload.resumeSummary,
+        applicantName: payload.applicantName,
+        applicantEmail: payload.applicantEmail,
+        applicantPhone: payload.applicantPhone,
+        resumeId: payload.id || 'offline_resume',
+        resumeFileName: payload.resumeFileName || 'resume.pdf',
+        resumeBase64: payload.resumeBase64,
+        termsAccepted: payload.termsAccepted ?? true,
+        appliedAt: new Date().toISOString(),
+        status: 'Submitted',
+        source: 'applications',
+      };
+    }
+    throw err;
+  }
 }
 
 export interface PublicApplicationPayload {
@@ -541,18 +641,54 @@ export interface PublicApplicationPayload {
 export async function submitPublicApplication(
   payload: PublicApplicationPayload
 ): Promise<JobApplication> {
-  const result = await apiRequest<{
-    application: JobApplication;
-    emailDispatch?: EmailDispatchSummary;
-  }>(
-    '/api/public/applications',
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    false
-  );
-  return result.application;
+  try {
+    const result = await apiRequest<{
+      application: JobApplication;
+      emailDispatch?: EmailDispatchSummary;
+    }>(
+      '/api/public/applications',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      false
+    );
+    return result.application;
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        id: payload.id,
+        url: '/api/public/applications',
+        body: payload,
+        includeAuth: false,
+        label: `Candidate Application: ${payload.applicantName}`,
+      });
+      return {
+        id: payload.id || `offline_pub_${Date.now()}`,
+        candidateId: 'public_job_portal',
+        jobId: payload.jobId,
+        jobTitle: payload.jobTitle,
+        companyMasked: payload.companyMasked || 'Confidential - Apply via VCS',
+        location: payload.location || payload.city,
+        city: payload.city,
+        salary: payload.salary || 'As per Industry Standards',
+        experience: payload.experience || payload.qualificationExperience,
+        qualificationExperience: payload.qualificationExperience,
+        resumeSummary: payload.resumeSummary,
+        applicantName: payload.applicantName,
+        applicantEmail: payload.applicantEmail,
+        applicantPhone: payload.applicantPhone,
+        resumeId: payload.id || 'offline_resume',
+        resumeFileName: payload.resumeFileName,
+        resumeBase64: payload.resumeBase64,
+        termsAccepted: payload.termsAccepted,
+        appliedAt: new Date().toISOString(),
+        status: 'Submitted',
+        source: 'resume-godam',
+      };
+    }
+    throw err;
+  }
 }
 
 export async function fetchAdminApplications(): Promise<JobApplication[]> {
@@ -641,14 +777,118 @@ export interface PostJobPayload {
 export async function postEmployerJob(
   payload: PostJobPayload
 ): Promise<{ job: JobListing; message: string; emailDispatches?: EmailDispatchSummary[] }> {
-  return apiRequest<{
-    job: JobListing;
-    message: string;
-    emailDispatches?: EmailDispatchSummary[];
-  }>('/api/jobs', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  try {
+    return await apiRequest<{
+      job: JobListing;
+      message: string;
+      emailDispatches?: EmailDispatchSummary[];
+    }>('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        id: payload.id,
+        url: '/api/jobs',
+        body: payload,
+        includeAuth: true,
+        label: `Company Requirement: ${payload.company} — ${payload.title}`,
+      });
+      return {
+        job: {
+          id: payload.id || `offline_job_${Date.now()}`,
+          title: payload.title,
+          jobTitle: payload.title,
+          designation: payload.designation,
+          company: payload.company,
+          clientName: payload.company,
+          location: payload.location,
+          experience: payload.experience,
+          salary: payload.salary,
+          jobType: payload.jobType,
+          skills: payload.skills.split(',').map((s) => s.trim()).filter(Boolean),
+          description: payload.description,
+          jobDescription: payload.description,
+          qualification: payload.qualification || '',
+          openings: payload.openings || 1,
+          openingsCount: payload.openings || 1,
+          lastDateToApply: payload.lastDateToApply,
+          postedAt: new Date().toISOString().slice(0, 10),
+          status: 'Pending',
+        },
+        message: 'Saved offline. Requirement will submit automatically once online.',
+        emailDispatches: [],
+      };
+    }
+    throw err;
+  }
+}
+
+export interface PublicCompanyRequirementPayload {
+  id?: string;
+  companyName: string;
+  contactPerson: string;
+  phone: string;
+  email?: string;
+  city: string;
+  postRequired: string;
+  salary: string;
+  vacancyCount: number;
+  jobDescription: string;
+}
+
+export async function submitPublicCompanyRequirement(
+  payload: PublicCompanyRequirementPayload
+): Promise<{ job: JobListing; message: string; emailDispatches?: EmailDispatchSummary[] }> {
+  try {
+    return await apiRequest<{
+      job: JobListing;
+      message: string;
+      emailDispatches?: EmailDispatchSummary[];
+    }>(
+      '/api/public/company-requirement',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      false
+    );
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        id: payload.id,
+        url: '/api/public/company-requirement',
+        body: payload,
+        includeAuth: false,
+        label: `Company Requirement: ${payload.companyName} — ${payload.postRequired}`,
+      });
+      return {
+        job: {
+          id: payload.id || `offline_req_${Date.now()}`,
+          title: payload.postRequired,
+          jobTitle: payload.postRequired,
+          designation: payload.postRequired,
+          company: payload.companyName,
+          clientName: payload.companyName,
+          location: payload.city,
+          experience: 'As per JD',
+          salary: payload.salary,
+          skills: [payload.postRequired],
+          description: payload.jobDescription,
+          jobDescription: payload.jobDescription,
+          qualification: '',
+          openings: payload.vacancyCount,
+          openingsCount: payload.vacancyCount,
+          postedAt: new Date().toISOString().slice(0, 10),
+          status: 'Pending',
+        },
+        message: 'Saved offline. Requirement will submit automatically once connected.',
+        emailDispatches: [],
+      };
+    }
+    throw err;
+  }
 }
 
 export async function fetchEmployerJobs(): Promise<JobListing[]> {
@@ -677,29 +917,138 @@ export async function updateAdminJobStatus(
 
 export interface JobAlertPayload {
   name: string;
-  whatsappNumber: string;
-  email?: string;
-  channels?: Array<'whatsapp' | 'email'>;
+  email: string;
+  channels?: Array<'email'>;
   city: string;
   category: string;
+  jobs?: JobListing[];
 }
 
 export async function submitJobAlert(
   payload: JobAlertPayload
-): Promise<{ message: string; emailDispatch?: EmailDispatchSummary | null }> {
-  return apiRequest<{ message: string; emailDispatch?: EmailDispatchSummary | null }>(
-    '/api/job-alerts',
+): Promise<{
+  message: string;
+  emailDispatch?: EmailDispatchSummary | null;
+  matchedJobsCount?: number;
+  matchedJobsPreview?: JobAlertPreviewJob[];
+}> {
+  const wirePayload = {
+    name: payload.name,
+    email: payload.email,
+    channels: payload.channels || ['email'],
+    city: payload.city,
+    category: payload.category,
+    jobs: Array.isArray(payload.jobs)
+      ? payload.jobs.slice(0, 60).map((j) => ({
+          id: j.id,
+          title: j.title,
+          designation: j.designation,
+          location: j.location,
+          experience: j.experience,
+          salary: j.salary,
+          skills: j.skills,
+          qualification: j.qualification,
+          description: (j.description || '').slice(0, 350),
+        }))
+      : undefined,
+  };
+  try {
+    return await apiRequest<{
+      message: string;
+      emailDispatch?: EmailDispatchSummary | null;
+      matchedJobsCount?: number;
+      matchedJobsPreview?: JobAlertPreviewJob[];
+    }>(
+      '/api/job-alerts',
+      {
+        method: 'POST',
+        body: JSON.stringify(wirePayload),
+      },
+      true
+    );
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        url: '/api/job-alerts',
+        body: wirePayload,
+        includeAuth: true,
+        label: `Job Alert Subscription: ${payload.name}`,
+      });
+      return {
+        message: 'Job alert preference saved on this device.',
+        emailDispatch: null,
+        matchedJobsCount: 0,
+        matchedJobsPreview: [],
+      };
+    }
+    throw err;
+  }
+}
+
+export async function sendCandidateJobAlertDigest(payload: {
+  city?: string;
+  category?: string;
+  jobs?: JobListing[];
+}): Promise<{
+  emailDispatch: EmailDispatchSummary;
+  matchedJobsCount: number;
+  message: string;
+}> {
+  return apiRequest<{
+    emailDispatch: EmailDispatchSummary;
+    matchedJobsCount: number;
+    message: string;
+  }>('/api/candidate/job-alerts/send-digest', {
+    method: 'POST',
+    body: JSON.stringify({
+      city: payload.city,
+      category: payload.category,
+      jobs: (payload.jobs || []).slice(0, 60).map((j) => ({
+        id: j.id,
+        title: j.title,
+        designation: j.designation,
+        location: j.location,
+        experience: j.experience,
+        salary: j.salary,
+        skills: j.skills,
+        qualification: j.qualification,
+        description: (j.description || '').slice(0, 350),
+      })),
+    }),
+  });
+}
+
+export async function fetchAdminJobAlertsOverview(): Promise<AdminJobAlertsOverview> {
+  return apiRequest<AdminJobAlertsOverview>('/api/admin/job-alerts');
+}
+
+export async function dispatchAdminJobAlertForJob(
+  job: JobListing
+): Promise<{ dispatchedCount: number; message: string }> {
+  return apiRequest<{ dispatchedCount: number; message: string }>(
+    '/api/admin/job-alerts/dispatch',
     {
       method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    true
+      body: JSON.stringify({
+        job: {
+          id: job.id,
+          title: job.title,
+          designation: job.designation,
+          location: job.location,
+          experience: job.experience,
+          salary: job.salary,
+          skills: job.skills,
+          qualification: job.qualification,
+          description: (job.description || '').slice(0, 400),
+        },
+      }),
+    }
   );
 }
 
 export interface ContactInquiryPayload {
   name: string;
-  email: string;
+  email?: string;
   phone: string;
   companyName?: string;
   message: string;
@@ -708,14 +1057,29 @@ export interface ContactInquiryPayload {
 export async function submitContactInquiry(
   payload: ContactInquiryPayload
 ): Promise<{ message: string; emailDispatch?: EmailDispatchSummary }> {
-  return apiRequest<{ message: string; emailDispatch?: EmailDispatchSummary }>(
-    '/api/contact',
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    false
-  );
+  try {
+    return await apiRequest<{ message: string; emailDispatch?: EmailDispatchSummary }>(
+      '/api/contact',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      false
+    );
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      enqueueOfflineApiRequest({
+        url: '/api/contact',
+        body: payload,
+        includeAuth: false,
+        label: `Contact Inquiry: ${payload.name}`,
+      });
+      return {
+        message: 'Inquiry saved on this device and will send automatically when online.',
+      };
+    }
+    throw err;
+  }
 }
 
 export async function readImageFileAsBase64(
@@ -951,14 +1315,96 @@ export async function draftAiJobDescription(payload: {
   );
 }
 
+export async function queryAiCareerCopilot(payload: {
+  query: string;
+  jobs: JobListing[];
+  candidate?: CandidateProfile | null;
+}): Promise<AiCareerCopilotResponse> {
+  return apiRequest<AiCareerCopilotResponse>(
+    '/api/ai/career-copilot',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        query: payload.query,
+        jobs: payload.jobs.slice(0, 60).map((j) => ({
+          id: j.id,
+          title: j.title,
+          designation: j.designation,
+          location: j.location,
+          experience: j.experience,
+          salary: j.salary,
+          qualification: j.qualification,
+          skills: j.skills,
+        })),
+        candidate: payload.candidate
+          ? {
+              name: payload.candidate.name,
+              preferredRole: payload.candidate.preferredRole,
+              designation: payload.candidate.designation,
+              experience: payload.candidate.experience,
+              city: payload.candidate.city,
+              keySkills: payload.candidate.keySkills,
+            }
+          : {},
+      }),
+    },
+    false
+  );
+}
+
+export async function generateAiCoverLetter(payload: {
+  job: JobListing;
+  candidate?: {
+    name?: string;
+    qualificationExperience?: string;
+    experience?: string;
+    city?: string;
+    keySkills?: string[];
+  } | null;
+  tone?: 'Professional' | 'Executive' | 'Concise';
+}): Promise<AiCoverLetterResponse> {
+  return apiRequest<AiCoverLetterResponse>(
+    '/api/ai/cover-letter',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        job: {
+          title: payload.job.title,
+          jobTitle: payload.job.jobTitle,
+          location: payload.job.location,
+          experience: payload.job.experience,
+          qualification: payload.job.qualification,
+          skills: payload.job.skills,
+        },
+        candidate: payload.candidate || {},
+        tone: payload.tone || 'Professional',
+      }),
+    },
+    false
+  );
+}
+
+export async function fetchAiSearchSuggestions(
+  query: string,
+  field: 'keyword' | 'location'
+): Promise<string[]> {
+  const result = await apiRequest<{ suggestions: string[] }>(
+    '/api/ai/search-suggestions',
+    {
+      method: 'POST',
+      body: JSON.stringify({ query, field }),
+    },
+    false
+  );
+  return Array.isArray(result.suggestions) ? result.suggestions : [];
+}
+
 // ============================================================================
 // Preferences, Search History, Skill Tests, Auto-Apply, Interview Reminders
 // ============================================================================
 
 export async function updateCandidatePreferences(payload: {
   emailNotificationsEnabled?: boolean;
-  whatsappAlertsEnabled?: boolean;
-  whatsappNumber?: string;
   alertCity?: string;
   alertCategory?: string;
   autoApplyConfig?: Partial<AutoApplyConfig>;

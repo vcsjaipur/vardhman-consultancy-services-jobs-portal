@@ -6,6 +6,7 @@ import {
   loadFormDraft,
   saveFormDraft,
 } from '../utils/formDraftStorage';
+import { submitContactInquiry } from '../utils/candidateApi';
 import { maskCompanyName, toFriendlyPortalError } from '../utils/jobHelpers';
 import { submitClientQueryToSharedPortal } from '../utils/sharedPortalFirestore';
 
@@ -158,6 +159,11 @@ export function PortalActionModal({
         phone: phone.trim(),
         message: message.trim(),
       });
+      void submitContactInquiry({
+        name: name.trim(),
+        phone: phone.trim(),
+        message: message.trim(),
+      }).catch(() => null);
       clearFormDraft(PORTAL_CONTACT_DRAFT_KEY);
       setSubmitted(true);
     } catch (err) {
@@ -225,10 +231,10 @@ export function PortalActionModal({
                 <p className="mt-1.5 text-slate-600">
                   Thank you, {name}. Vardhman Consultancy Services - Est 2012 ·{' '}
                   <a
-                    href="mailto:Info@vardhmanconsultancy.com"
+                    href="mailto:info@vardhmanconsultancy.com"
                     className="font-semibold text-[#063B7A] underline"
                   >
-                    Email: Info@vardhmanconsultancy.com
+                    Email: info@vardhmanconsultancy.com
                   </a>
                   .
                 </p>
@@ -285,13 +291,13 @@ export function PortalActionModal({
 
                 <div className="pt-1 flex flex-wrap items-center justify-between gap-3">
                   <a
-                    href={`mailto:Info@vardhmanconsultancy.com?subject=${encodeURIComponent(
+                    href={`mailto:info@vardhmanconsultancy.com?subject=${encodeURIComponent(
                       content.emailSubject
                     )}`}
                     className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#063B7A] hover:text-[#D96B0C] transition-colors"
                   >
                     <Mail className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Email: Info@vardhmanconsultancy.com</span>
+                    <span>Email: info@vardhmanconsultancy.com</span>
                   </a>
 
                   <button
@@ -312,10 +318,10 @@ export function PortalActionModal({
                 </p>
                 {activeModal !== 'apply' && activeModal !== 'upload-resume' ? (
                   <a
-                    href="mailto:Info@vardhmanconsultancy.com"
+                    href="mailto:info@vardhmanconsultancy.com"
                     className="font-semibold text-[#063B7A] hover:underline"
                   >
-                    Email: Info@vardhmanconsultancy.com
+                    Email: info@vardhmanconsultancy.com
                   </a>
                 ) : (
                   <p className="text-slate-500">
@@ -334,7 +340,7 @@ export function PortalActionModal({
                 </button>
                 {activeModal !== 'apply' && activeModal !== 'upload-resume' && (
                   <a
-                    href={`mailto:Info@vardhmanconsultancy.com?subject=${encodeURIComponent(
+                    href={`mailto:info@vardhmanconsultancy.com?subject=${encodeURIComponent(
                       content.emailSubject
                     )}`}
                     className="min-h-[42px] px-5 py-2 rounded-xl bg-[#063B7A] hover:bg-[#042A58] text-white text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap"

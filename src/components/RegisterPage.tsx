@@ -39,6 +39,7 @@ import {
   submitCompanyRequirementToSharedPortal,
   syncResumeProfileToSharedCandidates,
 } from '../utils/sharedPortalFirestore';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 const REGISTER_DRAFT_KEY = 'vcs_draft_register_v1';
 
@@ -381,8 +382,7 @@ export function RegisterPage({
             : '',
       }).catch(() => null);
       clearFormDraft(REGISTER_DRAFT_KEY);
-      setCreatedUser(candidate);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      onSuccess(candidate);
     } catch (err) {
       if (
         err instanceof ApiRequestError &&
@@ -554,11 +554,19 @@ export function RegisterPage({
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
           <div className="bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden text-center">
             <div className="bg-[#063B7A] px-6 py-5 text-white">
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center mb-3 shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
               <p className="text-xs sm:text-sm font-bold text-[#F58220]">
-                Vardhman Consultancy Services · Est. 2012
+                JobsNia.com · Vardhman Consultancy Services
               </p>
               <p className="mt-1 text-xs text-slate-200">
-                info@vardhmanconsultancy.com | Mobile &amp; WhatsApp: 7877250630
+                info@vardhmanconsultancy.com
               </p>
             </div>
 
@@ -619,16 +627,53 @@ export function RegisterPage({
 
         <div className="mt-5 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
           <div className="bg-[#063B7A] px-5 sm:px-8 py-6 text-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
+              {role !== 'admin' && (
+                <div className="inline-flex rounded-lg bg-white/10 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setRole('candidate')}
+                    className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                      role === 'candidate'
+                        ? 'bg-white text-[#063B7A]'
+                        : 'text-white/85 hover:text-white'
+                    }`}
+                  >
+                    Candidate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole('employer')}
+                    className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                      role === 'employer'
+                        ? 'bg-white text-[#063B7A]'
+                        : 'text-white/85 hover:text-white'
+                    }`}
+                  >
+                    Company / Employer
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <p className="text-xs sm:text-sm font-bold text-[#F58220]">
                 {role === 'employer'
-                  ? 'Vardhman Consultancy Services · Employer Portal'
+                  ? 'JobsNia.com · Employer Portal'
                   : role === 'admin'
-                    ? 'Vardhman Consultancy Services · Authorized Owner Portal'
+                    ? 'JobsNia.com · Authorized Owner Portal'
                     : 'Join 100% FREE — Our Services Is 100% FREE'}
               </p>
               <p className="text-xs text-slate-200 whitespace-nowrap">
-                info@vardhmanconsultancy.com | Mobile &amp; WhatsApp: 7877250630
+                info@vardhmanconsultancy.com
               </p>
             </div>
 

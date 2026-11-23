@@ -21,6 +21,7 @@ import {
   InsightPost,
 } from '../types/portal';
 import { readImageFileAsBase64, SaveInsightPostPayload } from '../utils/candidateApi';
+import vcsInsightsCover from '../assets/images/vcs_insights_cover_1794811322748.jpg';
 import { LOGO_SRC } from './Header';
 import { InsightsPostSkeleton } from './SkeletonLoaders';
 import { SocialShareMenu } from './SocialShareMenu';
@@ -41,7 +42,7 @@ interface VcsInsightsPageProps {
   onGoToRegister: () => void;
 }
 
-const COVER_BANNER_SRC = '/src/assets/images/vcs_insights_cover_1794811322748.jpg';
+const COVER_BANNER_SRC = vcsInsightsCover;
 
 const CATEGORIES: InsightCategory[] = [
   'Official Update',
@@ -376,12 +377,13 @@ export function VcsInsightsPage({
           <div className="px-5 sm:px-8 pb-5">
             {/* Logo Overlap + Action Buttons */}
             <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 -mt-10 sm:-mt-12 relative z-10">
-              <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-white border border-slate-200 shadow-md p-2 flex items-center justify-center shrink-0">
+              <div className="w-36 h-24 sm:w-44 sm:h-28 rounded-2xl bg-white border border-slate-200 shadow-md p-1.5 flex items-center justify-center shrink-0">
                 {!logoError ? (
                   <img
                     src={LOGO_SRC}
-                    alt="Vardhman Consultancy Services"
+                    alt="JobsNia.com — Jobs With Purpose"
                     referrerPolicy="no-referrer"
+                    decoding="sync"
                     onError={() => setLogoError(true)}
                     className="w-full h-full object-contain"
                   />
@@ -536,11 +538,11 @@ export function VcsInsightsPage({
                 {!isComposerOpen ? (
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-xl border border-slate-200 bg-slate-50 p-1.5 flex items-center justify-center shrink-0">
+                      <div className="w-16 h-11 rounded-xl border border-slate-200 bg-white p-1 flex items-center justify-center shrink-0">
                         {!logoError ? (
                           <img
                             src={LOGO_SRC}
-                            alt="VCS Admin"
+                            alt="JobsNia.com — Jobs With Purpose"
                             referrerPolicy="no-referrer"
                             className="w-full h-full object-contain"
                           />
@@ -833,11 +835,11 @@ export function VcsInsightsPage({
                       {/* Post Author Identity Row */}
                       <div className="p-5 sm:p-6 pb-0 flex items-start justify-between gap-3">
                         <div className="flex items-start gap-3 min-w-0">
-                          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl border border-slate-200 bg-white p-1.5 flex items-center justify-center shrink-0">
+                          <div className="w-16 h-11 sm:w-20 sm:h-14 rounded-xl border border-slate-200 bg-white p-1 flex items-center justify-center shrink-0">
                             {!logoError ? (
                               <img
                                 src={LOGO_SRC}
-                                alt="Vardhman Consultancy Services"
+                                alt="JobsNia.com — Jobs With Purpose"
                                 referrerPolicy="no-referrer"
                                 className="w-full h-full object-contain"
                               />

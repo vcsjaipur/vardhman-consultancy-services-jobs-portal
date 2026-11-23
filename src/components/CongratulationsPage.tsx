@@ -62,7 +62,7 @@ export function CongratulationsPage({
               <div className="mt-5 py-3.5 px-4 rounded-xl bg-gradient-to-r from-[#0A8E43]/10 to-[#0A8E43]/5 border border-[#0A8E43]/25">
                 <p className="text-sm sm:text-base font-semibold text-[#0A8E43]">
                   {isApply
-                    ? 'Application Submitted Successfully ✅ — Saved securely in Resume Godam'
+                    ? 'Application Submitted Successfully ✅ — Saved securely in our Candidate Repository'
                     : 'Profile Active — Apply directly through our Job Portal'}
                 </p>
               </div>

@@ -34,12 +34,19 @@ import {
 import { fetchResumeBlobUrl } from '../utils/candidateApi';
 import { JOBS_PER_PAGE } from '../utils/firestorePortal';
 import { base64ToPdfBlobUrl, toFriendlyPortalError } from '../utils/jobHelpers';
+import {
+  downloadOfflineDataCsv,
+  downloadOfflineDataJson,
+} from '../utils/offlineSyncManager';
+import { SharedCompanyRequirementRecord } from '../utils/sharedPortalFirestore';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 import { DashboardCardSkeleton } from './SkeletonLoaders';
 
 interface AdminDashboardPageProps {
   candidate: CandidateProfile | null;
   jobs: JobListing[];
   applications?: JobApplication[];
+  companyRequirements?: SharedCompanyRequirementRecord[];
   isLoading: boolean;
   isLoadingApplications?: boolean;
   autoApproveEnabled?: boolean;
@@ -55,11 +62,13 @@ interface AdminDashboardPageProps {
 }
 
 type AdminFilterTab = 'Pending' | 'Approved' | 'Rejected' | 'All' | 'Applications';
+type RepositoryScope = 'all' | 'candidates' | 'companies';
 
 export function AdminDashboardPage({
   candidate,
   jobs,
   applications = [],
+  companyRequirements = [],
   isLoading,
   isLoadingApplications = false,
   autoApproveEnabled = false,
@@ -74,6 +83,7 @@ export function AdminDashboardPage({
   onBackHome,
 }: AdminDashboardPageProps) {
   const [activeTab, setActiveTab] = useState<AdminFilterTab>('Pending');
+  const [repoScope, setRepoScope] = useState<RepositoryScope>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
@@ -90,7 +100,7 @@ export function AdminDashboardPage({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchQuery]);
+  }, [activeTab, searchQuery, repoScope]);
 
   useEffect(() => {
     return () => {
@@ -114,11 +124,57 @@ export function AdminDashboardPage({
         app.location,
         app.jobTitle,
         app.resumeFileName,
+        app.resumeSummary,
       ]
         .filter(Boolean)
         .some((val) => String(val).toLowerCase().includes(q))
     );
   }, [applications, searchQuery]);
+
+  const filteredCompanies = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return companyRequirements;
+    return companyRequirements.filter((req) =>
+      [
+        req.companyName,
+        req.contactPerson,
+        req.phone,
+        req.city,
+        req.postRequired,
+        req.salary,
+        req.jobDescription,
+        req.status,
+      ]
+        .filter(Boolean)
+        .some((val) => String(val).toLowerCase().includes(q))
+    );
+  }, [companyRequirements, searchQuery]);
+
+  const repositoryEntries = useMemo(() => {
+    const entries: Array<
+      | { kind: 'candidate'; sortMs: number; data: JobApplication }
+      | { kind: 'company'; sortMs: number; data: SharedCompanyRequirementRecord }
+    > = [];
+    if (repoScope === 'all' || repoScope === 'candidates') {
+      for (const app of filteredApplications) {
+        entries.push({
+          kind: 'candidate',
+          sortMs: Date.parse(app.appliedAt || '') || 0,
+          data: app,
+        });
+      }
+    }
+    if (repoScope === 'all' || repoScope === 'companies') {
+      for (const req of filteredCompanies) {
+        entries.push({
+          kind: 'company',
+          sortMs: Date.parse(req.createdAt || '') || 0,
+          data: req,
+        });
+      }
+    }
+    return entries.sort((a, b) => b.sortMs - a.sortMs);
+  }, [filteredApplications, filteredCompanies, repoScope]);
 
   if (!candidate) {
     return (
@@ -131,6 +187,12 @@ export function AdminDashboardPage({
 
         <div className="max-w-xl mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
           <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-10 shadow-xl">
+            <img
+              src={PORTAL_BRAND_LOGO_SRC}
+              alt="JobsNia.com — Jobs With Purpose"
+              decoding="sync"
+              className="h-16 sm:h-20 w-auto mx-auto object-contain mb-4 select-none"
+            />
             <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-[#063B7A] to-[#042A58] text-white flex items-center justify-center shadow-md">
               <ShieldCheck className="w-7 h-7" aria-hidden="true" />
             </div>
@@ -175,6 +237,12 @@ export function AdminDashboardPage({
 
         <div className="max-w-xl mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
           <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-10 shadow-xl">
+            <img
+              src={PORTAL_BRAND_LOGO_SRC}
+              alt="JobsNia.com — Jobs With Purpose"
+              decoding="sync"
+              className="h-16 sm:h-20 w-auto mx-auto object-contain mb-4 select-none"
+            />
             <div className="w-14 h-14 mx-auto rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shadow-xs">
               <ShieldCheck className="w-7 h-7" aria-hidden="true" />
             </div>
@@ -220,14 +288,14 @@ export function AdminDashboardPage({
   });
 
   const activeItemsCount =
-    activeTab === 'Applications' ? filteredApplications.length : filteredJobs.length;
+    activeTab === 'Applications' ? repositoryEntries.length : filteredJobs.length;
   const totalPages = Math.max(1, Math.ceil(activeItemsCount / JOBS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const paginatedJobs = filteredJobs.slice(
     (safePage - 1) * JOBS_PER_PAGE,
     safePage * JOBS_PER_PAGE
   );
-  const paginatedApplications = filteredApplications.slice(
+  const paginatedRepository = repositoryEntries.slice(
     (safePage - 1) * JOBS_PER_PAGE,
     safePage * JOBS_PER_PAGE
   );
@@ -352,14 +420,22 @@ export function AdminDashboardPage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
             <div>
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center mb-3 shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
               <p className="text-xs sm:text-sm font-semibold text-[#F6D574]">
-                Vardhman Consultancy Services · Admin Verification Desk
+                JobsNia.com · Vardhman Consultancy Services · Admin Verification Desk
               </p>
               <h1 className="mt-1 font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
                 Admin Dashboard
               </h1>
               <p className="mt-1.5 text-sm text-slate-200">
-                Verify job mandates. Approved jobs appear live on the Vardhman Consultancy Services Portal.
+                Verify job mandates. Approved jobs appear live on JobsNia.com — Vardhman Consultancy Services.
               </p>
             </div>
 
@@ -426,9 +502,9 @@ export function AdminDashboardPage({
               onClick={() => setActiveTab('Applications')}
               className="col-span-2 lg:col-span-1 text-left bg-[#FBF4DC] hover:bg-[#F7ECC4] border border-[#D4AF37] rounded-2xl shadow-lg p-4 transition-colors cursor-pointer"
             >
-              <p className="text-xs font-semibold text-[#9A6F04]">Resume Godam (CVs)</p>
+              <p className="text-xs font-semibold text-[#9A6F04]">Resume Repository</p>
               <p className="mt-1 font-display text-2xl font-bold text-[#062856] tabular-nums">
-                {applications.length}
+                {applications.length + companyRequirements.length}
               </p>
             </button>
           </div>
@@ -495,7 +571,7 @@ export function AdminDashboardPage({
                 (tab) => {
                   const count =
                     tab === 'Applications'
-                      ? applications.length
+                      ? applications.length + companyRequirements.length
                       : tab === 'All'
                         ? jobs.length
                         : tab === 'Pending'
@@ -503,7 +579,7 @@ export function AdminDashboardPage({
                           : tab === 'Approved'
                             ? approvedCount
                             : rejectedCount;
-                  const label = tab === 'Applications' ? 'Resume Godam / Applications' : tab;
+                  const label = tab === 'Applications' ? 'Resume Repository & Applications' : tab;
                   const isActive = activeTab === tab;
                   return (
                     <button
@@ -546,58 +622,168 @@ export function AdminDashboardPage({
               </div>
             ) : (
               <div className="mt-6 space-y-5">
-                {/* Resume Godam Search Bar */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="relative flex-1">
-                    <Search
-                      className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                      aria-hidden="true"
-                    />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search Resume Godam by candidate name, mobile, email, qualification, city, or job role..."
-                      className="w-full min-h-[42px] pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:border-[#063B7A] focus:outline-none focus:ring-2 focus:ring-[#063B7A]/15"
-                    />
+                {/* Resume Repository Search & Offline Export Bar */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="relative flex-1">
+                      <Search
+                        className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        aria-hidden="true"
+                      />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by candidate name, company, mobile, email, qualification, city, role, or keywords..."
+                        className="w-full min-h-[42px] pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:border-[#063B7A] focus:outline-none focus:ring-2 focus:ring-[#063B7A]/15"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          Clear Search
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={downloadOfflineDataCsv}
+                        className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+                        <span>Download Offline CSV</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={downloadOfflineDataJson}
+                        className="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[#062856] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-[#0A8E43]" aria-hidden="true" />
+                        <span>Download JSON</span>
+                      </button>
+                    </div>
                   </div>
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery('')}
-                      className="min-h-[40px] px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shrink-0"
-                    >
-                      Clear Search
-                    </button>
-                  )}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+                    {(
+                      [
+                        {
+                          id: 'all',
+                          label: `All Records (${filteredApplications.length + filteredCompanies.length})`,
+                        },
+                        {
+                          id: 'candidates',
+                          label: `Candidates (${filteredApplications.length})`,
+                        },
+                        {
+                          id: 'companies',
+                          label: `Company Requirements (${filteredCompanies.length})`,
+                        },
+                      ] as Array<{ id: RepositoryScope; label: string }>
+                    ).map((pill) => (
+                      <button
+                        key={pill.id}
+                        type="button"
+                        onClick={() => setRepoScope(pill.id)}
+                        className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer tabular-nums ${
+                          repoScope === pill.id
+                            ? 'bg-[#062856] text-white'
+                            : 'bg-slate-100 text-slate-600 hover:text-[#062856]'
+                        }`}
+                      >
+                        {pill.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {filteredApplications.length === 0 ? (
+                {repositoryEntries.length === 0 ? (
                   <div className="bg-white border border-slate-200 rounded-2xl shadow-sm px-6 py-14 text-center">
                     <div className="w-14 h-14 mx-auto rounded-2xl bg-[#063B7A]/8 text-[#063B7A] flex items-center justify-center">
                       <Users className="w-7 h-7" aria-hidden="true" />
                     </div>
                     <h2 className="mt-4 font-display text-xl font-bold text-[#063B7A]">
-                      {applications.length === 0
-                        ? 'No Entries in Resume Godam Yet'
-                        : 'No Matching Candidate Entries'}
+                      {applications.length + companyRequirements.length === 0
+                        ? 'No Entries in Resume Repository Yet'
+                        : 'No Matching Repository Entries'}
                     </h2>
                     <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">
-                      {applications.length === 0
-                        ? 'When candidates submit applications or resumes through the portal, their complete details and PDF CVs appear here immediately.'
-                        : 'Try adjusting your search keywords to see all Resume Godam entries.'}
+                      {applications.length + companyRequirements.length === 0
+                        ? 'When candidates submit applications or companies submit hiring requirements through the portal, all complete details appear here immediately.'
+                        : 'Try adjusting your search keywords or filter tabs to see all saved records.'}
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {paginatedApplications.map((app) => {
+                    {paginatedRepository.map((entry) => {
+                      if (entry.kind === 'company') {
+                        const req = entry.data;
+                        return (
+                          <article
+                            key={`req_${req.id}`}
+                            className="bg-white border border-[#D4AF37]/60 rounded-2xl shadow-sm hover:shadow-md transition-shadow p-5 sm:p-6 space-y-2.5"
+                          >
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className="px-2.5 py-0.5 rounded-md bg-[#FBF4DC] border border-[#D4AF37]/60 text-[#9A6F04] text-xs font-bold">
+                                Company Requirement
+                              </span>
+                              <h3 className="font-display text-lg font-bold text-[#063B7A]">
+                                {req.companyName} — {req.postRequired}
+                              </h3>
+                              <span className="px-2.5 py-0.5 rounded-md bg-[#063B7A]/10 text-[#063B7A] text-xs font-semibold tabular-nums">
+                                Vacancies: {req.vacancyCount}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs sm:text-sm text-slate-600">
+                              <span className="inline-flex items-center gap-1.5 font-medium text-slate-800">
+                                <User className="w-4 h-4 text-[#063B7A]" aria-hidden="true" />
+                                <span>Contact: {req.contactPerson}</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1.5 tabular-nums font-medium text-slate-800">
+                                <Phone className="w-4 h-4 text-[#063B7A]" aria-hidden="true" />
+                                <span>{req.phone}</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                                <span>{req.city}</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1.5 tabular-nums">
+                                <IndianRupee className="w-4 h-4 text-[#0A8E43]" aria-hidden="true" />
+                                <span>{req.salary}</span>
+                              </span>
+                            </div>
+
+                            {req.jobDescription && (
+                              <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 whitespace-pre-line">
+                                {req.jobDescription}
+                              </p>
+                            )}
+
+                            <p className="text-xs text-slate-500 tabular-nums">
+                              Submitted on{' '}
+                              {new Date(req.createdAt).toLocaleDateString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                              })}
+                            </p>
+                          </article>
+                        );
+                      }
+
+                      const app = entry.data;
                       const hasPdf = Boolean(app.resumeBase64 || app.resumeId);
                       const isBusyCv = busyCvAppId === app.id;
                       const qualExp = app.qualificationExperience || app.experience;
                       const cityOrLocation = app.city || app.location;
                       return (
                         <article
-                          key={app.id}
+                          key={`app_${app.id}`}
                           className="bg-white border border-slate-200/90 rounded-2xl shadow-sm hover:shadow-md transition-shadow p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-5"
                         >
                           <div className="min-w-0 flex-1 space-y-2.5">
@@ -899,7 +1085,7 @@ export function AdminDashboardPage({
             <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-4 bg-slate-50">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-[#0A8E43]">
-                  Resume Godam · PDF Preview
+                  Resume Repository · PDF Preview
                 </p>
                 <h3
                   id="cv-preview-title"

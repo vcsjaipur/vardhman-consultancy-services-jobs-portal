@@ -21,6 +21,7 @@ import {
   draftAiJobDescription,
   getStoredToken,
   postEmployerJob,
+  submitPublicCompanyRequirement,
 } from '../utils/candidateApi';
 import {
   clearFormDraft,
@@ -30,6 +31,7 @@ import {
 import { createJobInFirestore } from '../utils/firestorePortal';
 import { toFriendlyPortalError } from '../utils/jobHelpers';
 import { submitCompanyRequirementToSharedPortal } from '../utils/sharedPortalFirestore';
+import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 const POST_JOB_DRAFT_KEY = 'vcs_draft_post_job_v1';
 
@@ -133,6 +135,12 @@ export function PostJobPage({
       <div className="bg-slate-50 min-h-[calc(100vh-5rem)] border-b border-slate-200">
         <div className="max-w-xl mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-lg">
+            <img
+              src={PORTAL_BRAND_LOGO_SRC}
+              alt="JobsNia.com — Jobs With Purpose"
+              decoding="sync"
+              className="h-16 sm:h-20 w-auto mx-auto object-contain mb-4 select-none"
+            />
             <div className="w-14 h-14 mx-auto rounded-2xl bg-[#063B7A] text-white flex items-center justify-center shadow-sm">
               <Building2 className="w-7 h-7" aria-hidden="true" />
             </div>
@@ -270,6 +278,32 @@ export function PostJobPage({
           description: jobDescription.trim(),
           lastDateToApply: 'Open Until Filled',
           openings: openingsNum,
+        }).catch(() =>
+          submitPublicCompanyRequirement({
+            id: reqId,
+            companyName: companyName.trim(),
+            contactPerson: contactPerson.trim(),
+            phone: phone.trim(),
+            email: recruiterEmail.trim() || candidate.email,
+            city: city.trim(),
+            postRequired: postRequired.trim(),
+            salary,
+            vacancyCount: openingsNum,
+            jobDescription: jobDescription.trim(),
+          }).catch(() => null)
+        );
+      } else {
+        void submitPublicCompanyRequirement({
+          id: reqId,
+          companyName: companyName.trim(),
+          contactPerson: contactPerson.trim(),
+          phone: phone.trim(),
+          email: recruiterEmail.trim(),
+          city: city.trim(),
+          postRequired: postRequired.trim(),
+          salary,
+          vacancyCount: openingsNum,
+          jobDescription: jobDescription.trim(),
         }).catch(() => null);
       }
 
@@ -398,8 +432,16 @@ export function PostJobPage({
         ) : (
           <div className="mt-5 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
             <div className="bg-[#063B7A] px-5 sm:px-8 py-6 text-white">
+              <div className="bg-white rounded-xl px-3.5 py-2 inline-flex items-center mb-3 shadow-sm">
+                <img
+                  src={PORTAL_BRAND_LOGO_SRC}
+                  alt="JobsNia.com — Jobs With Purpose"
+                  decoding="sync"
+                  className="h-16 sm:h-20 w-auto object-contain select-none"
+                />
+              </div>
               <p className="text-xs sm:text-sm font-semibold text-[#F58220]">
-                Vardhman Consultancy Services · Confidential Employer Desk
+                JobsNia.com · Vardhman Consultancy Services · Confidential Employer Desk
               </p>
               <h1 className="mt-1 font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
                 Submit Company Hiring Requirement

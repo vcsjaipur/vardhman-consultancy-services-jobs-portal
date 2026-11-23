@@ -23,7 +23,6 @@ import {
   Search,
   Send,
   SlidersHorizontal,
-  Stethoscope,
   Upload,
   X,
 } from 'lucide-react';
@@ -674,8 +673,8 @@ export function SearchJobsPage({
                 <span>Home</span>
               </button>
               <p className="text-xs sm:text-sm font-semibold text-[#0A8E43] flex items-center gap-1.5">
-                <Stethoscope className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Our Core Expertise: Doctors &amp; Pharmaceutical Professionals</span>
+                <Building2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Multi-Sector Expertise: Pharmaceutical, Healthcare, Hospital, IT, Non-IT &amp; Doctor&apos;s</span>
               </p>
             </div>
 

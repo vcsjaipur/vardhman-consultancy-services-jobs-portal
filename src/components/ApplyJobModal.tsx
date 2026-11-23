@@ -447,8 +447,8 @@ export function ApplyJobModal({
                 <p className="mt-2 text-sm text-slate-700 leading-relaxed">
                   Thank you, <span className="font-semibold">{submittedApp.applicantName}</span>. Your application and PDF resume (
                   <span className="font-semibold">{submittedApp.resumeFileName}</span>) for{' '}
-                  <span className="font-semibold">{submittedApp.jobTitle}</span> have been saved in{' '}
-                  <span className="font-semibold text-[#063B7A]">Resume Godam / Applications</span>.
+                  <span className="font-semibold">{submittedApp.jobTitle}</span> have been securely recorded in our{' '}
+                  <span className="font-semibold text-[#063B7A]">Candidate Application Repository</span>.
                 </p>
                 {submittedApp.qualificationExperience && (
                   <p className="mt-2 text-xs text-slate-600">

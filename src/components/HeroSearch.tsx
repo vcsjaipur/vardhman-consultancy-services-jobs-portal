@@ -1,14 +1,18 @@
 import { FormEvent, RefObject } from 'react';
-import { Briefcase, History, MapPin, Search, X } from 'lucide-react';
-import { JobSearchFilters, SearchHistoryItem } from '../types/portal';
+import { Bell, Briefcase, History, MapPin, Search, Sparkles, X } from 'lucide-react';
+import { JobListing, JobSearchFilters, SearchHistoryItem } from '../types/portal';
+import { SearchSuggestionInput } from './SearchSuggestionInput';
 
 interface HeroSearchProps {
   filters: JobSearchFilters;
   onFiltersChange: (next: JobSearchFilters) => void;
   onSearchSubmit: () => void;
   keywordInputRef: RefObject<HTMLInputElement | null>;
+  jobs?: JobListing[];
   onNavigateBuildResume?: () => void;
   onNavigateSearchJobs?: () => void;
+  onOpenAiCopilot?: () => void;
+  onOpenJobAlerts?: () => void;
   searchHistory?: SearchHistoryItem[];
   onSelectHistoryItem?: (item: SearchHistoryItem) => void;
   onRemoveHistoryItem?: (id: string) => void;
@@ -33,6 +37,9 @@ export function HeroSearch({
   onFiltersChange,
   onSearchSubmit,
   keywordInputRef,
+  jobs = [],
+  onOpenAiCopilot,
+  onOpenJobAlerts,
   searchHistory = [],
   onSelectHistoryItem,
   onRemoveHistoryItem,
@@ -57,12 +64,17 @@ export function HeroSearch({
             Your Job Search Ends Here
           </h1>
 
-          <p className="mt-3 text-sm sm:text-base font-medium text-[#F6D574] tracking-wide">
-            Verified Opportunities · Vardhman Consultancy Services
+          <p className="mt-3 text-xs sm:text-sm text-slate-200 leading-relaxed">
+            <span className="block font-semibold text-white">
+              Welcome to JobsNia.com Job Portal
+            </span>
+            <span className="block text-slate-200/95">
+              A Venture of Vardhman Consultancy Services - India&apos;s Leading Recruitment Agency
+            </span>
           </p>
         </div>
 
-        {/* Clean LinkedIn / Naukri / Indeed Inspired Elevated Search Bar: Skills | Experience | Location */}
+        {/* Elevated Search Bar with Autocomplete Suggestions: Skills | Experience | Location */}
         <form
           onSubmit={handleSubmit}
           role="search"
@@ -70,25 +82,28 @@ export function HeroSearch({
           className="mt-7 sm:mt-9 max-w-5xl mx-auto bg-white border border-[#D4AF37]/40 rounded-2xl shadow-2xl shadow-[#020B18]/40 p-2.5 sm:p-3.5"
         >
           <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-stretch">
-            {/* Skills */}
+            {/* Skills / Role Autocomplete */}
             <div className="md:col-span-4 relative flex items-center">
               <label htmlFor="search-keyword" className="sr-only">
-                Skills
+                Skills or Role
               </label>
-              <Search
-                className="w-4 h-4 text-[#062856]/60 absolute left-3.5 pointer-events-none"
-                aria-hidden="true"
-              />
-              <input
-                ref={keywordInputRef}
+              <SearchSuggestionInput
                 id="search-keyword"
-                type="text"
+                inputRef={keywordInputRef}
                 value={filters.keyword}
-                onChange={(e) =>
-                  onFiltersChange({ ...filters, keyword: e.target.value })
-                }
+                onChange={(val) => onFiltersChange({ ...filters, keyword: val })}
+                field="keyword"
+                jobs={jobs}
+                searchHistory={searchHistory}
+                ariaLabel="Skills, role, or designation"
                 placeholder="Skills (e.g. Pharma, MBBS, QA, Finance)"
-                className="w-full min-h-[48px] pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#062856] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 transition-colors"
+                icon={
+                  <Search
+                    className="w-4 h-4 text-[#062856]/60 absolute left-3.5 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                }
+                inputClassName="w-full min-h-[48px] pl-10 pr-8 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#062856] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 transition-colors"
               />
             </div>
 
@@ -117,24 +132,27 @@ export function HeroSearch({
               </select>
             </div>
 
-            {/* Location */}
+            {/* Location Autocomplete */}
             <div className="md:col-span-3 relative flex items-center">
               <label htmlFor="search-location" className="sr-only">
                 Location
               </label>
-              <MapPin
-                className="w-4 h-4 text-[#062856]/60 absolute left-3.5 pointer-events-none"
-                aria-hidden="true"
-              />
-              <input
+              <SearchSuggestionInput
                 id="search-location"
-                type="text"
                 value={filters.location}
-                onChange={(e) =>
-                  onFiltersChange({ ...filters, location: e.target.value })
-                }
+                onChange={(val) => onFiltersChange({ ...filters, location: val })}
+                field="location"
+                jobs={jobs}
+                searchHistory={searchHistory}
+                ariaLabel="City, state, or Pan India"
                 placeholder="Location (City, State or Pan India)"
-                className="w-full min-h-[48px] pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#062856] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 transition-colors"
+                icon={
+                  <MapPin
+                    className="w-4 h-4 text-[#062856]/60 absolute left-3.5 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                }
+                inputClassName="w-full min-h-[48px] pl-10 pr-8 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#062856] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 transition-colors"
               />
             </div>
 
@@ -150,6 +168,33 @@ export function HeroSearch({
             </div>
           </div>
         </form>
+
+        {/* Smart AI Finder & Job Alert Email Quick Strip */}
+        {(onOpenAiCopilot || onOpenJobAlerts) && (
+          <div className="mt-4 max-w-5xl mx-auto flex flex-wrap items-center justify-center gap-3 text-xs sm:text-sm">
+            {onOpenAiCopilot && (
+              <button
+                type="button"
+                onClick={onOpenAiCopilot}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-white/12 hover:bg-white/20 border border-[#D4AF37]/60 text-white font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
+                <span>AI Job Finder Copilot</span>
+              </button>
+            )}
+
+            {onOpenJobAlerts && (
+              <button
+                type="button"
+                onClick={onOpenJobAlerts}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#0A8E43] hover:bg-[#087537] border border-[#0A8E43] text-white font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Bell className="w-4 h-4" aria-hidden="true" />
+                <span>Get Job Alert Emails</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Recent Search History Chips */}
         {searchHistory.length > 0 && onSelectHistoryItem && (

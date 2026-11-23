@@ -2,13 +2,9 @@ import { JobListing, SearchPageFilters } from '../types/portal';
 
 export const CONFIDENTIAL_COMPANY_LABEL = 'Confidential - Apply via VCS';
 export const OFFICIAL_EMAIL = 'info@vardhmanconsultancy.com';
-export const OFFICIAL_PHONE_DISPLAY = '7877250630';
-export const OFFICIAL_WHATSAPP_NUMBER = '917877250630';
 
 export const FOOTER_SOCIAL_LINKS = {
   linkedin: 'https://www.linkedin.com/in/vikas-jain-0aa49093',
-  whatsappChannel: 'https://whatsapp.com/channel/0029Vb8Wptf6rsQqwGVGUG1G',
-  whatsappChat: 'https://wa.me/917877250630',
 } as const;
 
 export const SAVED_JOBS_STORAGE_KEY = 'vcs_saved_job_ids_v1';
