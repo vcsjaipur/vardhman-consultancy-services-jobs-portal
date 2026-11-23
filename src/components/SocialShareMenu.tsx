@@ -6,6 +6,7 @@ interface SocialShareMenuProps {
   text: string;
   url: string;
   variant?: 'icon' | 'button' | 'hero' | 'feed';
+  label?: string;
   className?: string;
 }
 
@@ -14,6 +15,7 @@ export function SocialShareMenu({
   text,
   url,
   variant = 'icon',
+  label,
   className = '',
 }: SocialShareMenuProps) {
   const [open, setOpen] = useState(false);
@@ -41,8 +43,15 @@ export function SocialShareMenu({
   const encodedUrl = encodeURIComponent(url);
   const encodedText = encodeURIComponent(text);
   const encodedTitle = encodeURIComponent(title);
+  const encodedWhatsApp = encodeURIComponent(`${text}\n${url}`);
 
   const shareChannels = [
+    {
+      name: 'WhatsApp',
+      href: `https://wa.me/?text=${encodedWhatsApp}`,
+      badge: 'WA',
+      color: 'text-[#0A8E43] bg-[#0A8E43]/10 hover:bg-[#0A8E43]/18',
+    },
     {
       name: 'LinkedIn',
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
@@ -94,6 +103,24 @@ export function SocialShareMenu({
     }
   };
 
+  const handleNativeShare = async () => {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({
+          title,
+          text,
+          url,
+        });
+        setOpen(false);
+      }
+    } catch {
+      // Ignore user cancellation
+    }
+  };
+
+  const canNativeShare =
+    typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
   const renderTrigger = () => {
     if (variant === 'hero') {
       return (
@@ -106,7 +133,7 @@ export function SocialShareMenu({
           className={`min-h-[42px] px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs sm:text-sm font-semibold text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer ${className}`}
         >
           <Share2 className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
-          <span>Share Job</span>
+          <span>{label || 'Share Job'}</span>
         </button>
       );
     }
@@ -122,7 +149,7 @@ export function SocialShareMenu({
           className={`w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 hover:bg-slate-100 hover:text-[#063B7A] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer ${className}`}
         >
           <Share2 className="w-4 h-4 shrink-0" aria-hidden="true" />
-          <span>Share</span>
+          <span>{label || 'Share'}</span>
         </button>
       );
     }
@@ -135,10 +162,10 @@ export function SocialShareMenu({
             e.stopPropagation();
             setOpen((prev) => !prev);
           }}
-          className={`min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:border-[#062856] text-xs font-semibold text-[#062856] inline-flex items-center gap-1.5 transition-colors cursor-pointer ${className}`}
+          className={`min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:border-[#062856] text-xs font-semibold text-[#062856] inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${className}`}
         >
-          <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Share</span>
+          <Share2 className="w-3.5 h-3.5 text-[#9A6F04] shrink-0" aria-hidden="true" />
+          <span>{label || 'Share'}</span>
         </button>
       );
     }
@@ -178,7 +205,7 @@ export function SocialShareMenu({
           className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl p-3 z-40 text-left"
         >
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-            <span className="text-xs font-bold text-[#062856]">Share via Social Media</span>
+            <span className="text-xs font-bold text-[#062856]">Share Job via</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -210,6 +237,17 @@ export function SocialShareMenu({
               </a>
             ))}
           </div>
+
+          {canNativeShare && (
+            <button
+              type="button"
+              onClick={() => void handleNativeShare()}
+              className="mt-2 w-full min-h-[36px] px-3 py-1.5 rounded-lg bg-[#062856] hover:bg-[#041C3F] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+              <span>Share via Device Apps</span>
+            </button>
+          )}
 
           <button
             type="button"

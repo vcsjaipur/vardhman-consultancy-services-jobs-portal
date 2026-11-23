@@ -25,6 +25,7 @@ import { SearchJobsPage } from './components/SearchJobsPage';
 import { SkillTestModal } from './components/SkillTestModal';
 import { VcsInsightsPage } from './components/VcsInsightsPage';
 import { WhyChooseSection } from './components/WhyChooseSection';
+import { CompanySection } from './components/CompanySection';
 import { OfflineBanner } from './components/OfflineBanner';
 import {
   CandidateProfile,
@@ -1346,6 +1347,14 @@ export default function App() {
             />
 
             <WhyChooseSection />
+
+            <CompanySection
+              candidate={candidate}
+              onPostJobAction={handlePostJobAction}
+              onEmployerLogin={() => handleNavigateLogin('employer')}
+              onEmployerRegister={() => handleNavigateRegister('employer')}
+              onContactUs={handleNavigateContactUs}
+            />
           </>
         )}
 

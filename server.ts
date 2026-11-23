@@ -283,6 +283,11 @@ interface StoredEmailDispatch {
   createdAt: string;
 }
 
+interface DailyVisitorDayRecord {
+  count: number;
+  visitorHashes: string[];
+}
+
 interface PortalDatabase {
   candidates: StoredCandidate[];
   applications: StoredApplication[];
@@ -291,6 +296,7 @@ interface PortalDatabase {
   contacts: StoredContactInquiry[];
   insightsPosts: StoredInsightPost[];
   emailDispatches: StoredEmailDispatch[];
+  dailyVisitors?: Record<string, DailyVisitorDayRecord>;
 }
 
 interface AuthenticatedRequest extends Request {
@@ -311,6 +317,7 @@ function ensureDataDirs(): void {
       contacts: [],
       insightsPosts: [],
       emailDispatches: [],
+      dailyVisitors: {},
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(emptyDb, null, 2), 'utf8');
   }
@@ -367,6 +374,10 @@ function readDb(): PortalDatabase {
       contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [],
       insightsPosts: Array.isArray(parsed.insightsPosts) ? parsed.insightsPosts : [],
       emailDispatches: Array.isArray(parsed.emailDispatches) ? parsed.emailDispatches : [],
+      dailyVisitors:
+        parsed.dailyVisitors && typeof parsed.dailyVisitors === 'object'
+          ? parsed.dailyVisitors
+          : {},
     };
   } catch {
     return {
@@ -377,6 +388,7 @@ function readDb(): PortalDatabase {
       contacts: [],
       insightsPosts: [],
       emailDispatches: [],
+      dailyVisitors: {},
     };
   }
 }
@@ -5198,6 +5210,164 @@ async function startServer() {
       }
     }
   );
+
+  // =========================================================================
+  // PUBLIC DAILY VISITOR COUNTER & FOOTER LANGUAGE CONVERTER
+  // =========================================================================
+  function getIstDateKey(): string {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  }
+
+  function hashVisitorToken(raw: string): string {
+    return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24);
+  }
+
+  app.get('/api/public/daily-visitors', (_req: Request, res: Response) => {
+    const db = readDb();
+    const dateKey = getIstDateKey();
+    const dayEntry = db.dailyVisitors?.[dateKey];
+    const count = dayEntry && typeof dayEntry.count === 'number' ? dayEntry.count : 0;
+    res.json({ date: dateKey, dailyVisitors: count });
+  });
+
+  app.post('/api/public/daily-visitors/hit', (req: Request, res: Response) => {
+    const db = readDb();
+    const dateKey = getIstDateKey();
+    if (!db.dailyVisitors || typeof db.dailyVisitors !== 'object') {
+      db.dailyVisitors = {};
+    }
+
+    const headerVisitor = String(req.headers['x-visitor-id'] ?? '').trim();
+    const bodyVisitor = String((req.body as Record<string, unknown> | undefined)?.visitorId ?? '').trim();
+    const ipFallback = String(req.ip || req.socket?.remoteAddress || 'anon').trim();
+    const rawIdentifier =
+      headerVisitor || bodyVisitor || `${ipFallback}:${String(req.headers['user-agent'] ?? '').slice(0, 60)}`;
+    const visitorHash = hashVisitorToken(rawIdentifier);
+
+    const existing = db.dailyVisitors[dateKey] || { count: 0, visitorHashes: [] };
+    const hashes = Array.isArray(existing.visitorHashes) ? existing.visitorHashes : [];
+
+    if (!hashes.includes(visitorHash)) {
+      hashes.push(visitorHash);
+      db.dailyVisitors[dateKey] = {
+        count: (Number(existing.count) || 0) + 1,
+        visitorHashes: hashes.slice(-5000),
+      };
+
+      // Prune entries older than 30 days to keep portal-db.json compact
+      const keys = Object.keys(db.dailyVisitors).sort();
+      if (keys.length > 30) {
+        for (const oldKey of keys.slice(0, keys.length - 30)) {
+          delete db.dailyVisitors[oldKey];
+        }
+      }
+      writeDb(db);
+    }
+
+    res.json({
+      date: dateKey,
+      dailyVisitors: db.dailyVisitors[dateKey]?.count || 0,
+    });
+  });
+
+  const ALLOWED_TRANSLATE_LANGS = new Set([
+    'en', 'hi', 'mr', 'gu', 'ta', 'te', 'bn', 'pa', 'kn', 'ml', 'ur', 'es', 'fr', 'ar',
+  ]);
+
+  async function translateTextViaGtx(text: string, targetLang: string): Promise<string> {
+    const endpoint = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
+    try {
+      const resp = await fetch(endpoint, { signal: AbortSignal.timeout(3500) });
+      if (resp.ok) {
+        const data = (await resp.json()) as unknown;
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          const parts = (data[0] as unknown[])
+            .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
+            .join('');
+          if (parts.trim()) return parts.trim();
+        }
+      }
+    } catch {
+      // Fall through to secondary translator
+    }
+
+    try {
+      const mmUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${encodeURIComponent(targetLang)}`;
+      const mmResp = await fetch(mmUrl, { signal: AbortSignal.timeout(3500) });
+      if (mmResp.ok) {
+        const mmData = (await mmResp.json()) as {
+          responseData?: { translatedText?: string };
+        };
+        const translated = mmData?.responseData?.translatedText?.trim();
+        if (translated && translated.toLowerCase() !== text.toLowerCase()) {
+          return translated;
+        }
+      }
+    } catch {
+      // Return original text if all external translators are unreachable
+    }
+    return text;
+  }
+
+  app.post('/api/public/translate', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const targetLang = String(body.targetLang ?? 'en').trim().toLowerCase();
+      const rawTexts = Array.isArray(body.texts) ? body.texts : [];
+      const texts = rawTexts
+        .slice(0, 40)
+        .map((t) => String(t ?? '').slice(0, 800));
+
+      if (!ALLOWED_TRANSLATE_LANGS.has(targetLang) || targetLang === 'en' || texts.length === 0) {
+        res.json({ translations: texts });
+        return;
+      }
+
+      const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+      if (apiKey) {
+        try {
+          const ai = getGeminiAiClient();
+          const prompt = [
+            `Translate each string in the JSON array from English into language code "${targetLang}".`,
+            'Preserve brand names ("JobsNia.com", "Vardhman Consultancy Services", "VCS"), numbers, emails, and URLs.',
+            'Return ONLY a JSON array of translated strings with the exact same length and order as the input.',
+            `Input: ${JSON.stringify(texts)}`,
+          ].join('\n');
+
+          const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+          });
+
+          const parsed = JSON.parse(response.text || '[]') as unknown;
+          if (Array.isArray(parsed) && parsed.length === texts.length) {
+            res.json({
+              translations: parsed.map((item, idx) =>
+                typeof item === 'string' && item.trim() ? item.trim() : texts[idx]
+              ),
+            });
+            return;
+          }
+        } catch {
+          // Fall back cleanly to GTX translation
+        }
+      }
+
+      const translations = await Promise.all(
+        texts.map((item) => translateTextViaGtx(item, targetLang).catch(() => item))
+      );
+      res.json({ translations });
+    } catch {
+      res.status(500).json({ error: 'Unable to translate right now.' });
+    }
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     process.env.DISABLE_HMR = 'true';

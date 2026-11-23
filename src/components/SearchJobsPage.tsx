@@ -1141,17 +1141,28 @@ export function SearchJobsPage({
                         </div>
 
                         <div className="mt-4 pt-3.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onApplyJob(job);
-                            }}
-                            className="min-h-[40px] px-4 py-2 rounded-lg bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-                          >
-                            <Send className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
-                            <span>Apply Now</span>
-                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onApplyJob(job);
+                              }}
+                              className="min-h-[40px] px-4 py-2 rounded-lg bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <Send className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+                              <span>Apply Now</span>
+                            </button>
+
+                            <SocialShareMenu
+                              title={job.title}
+                              text={shareText}
+                              url={shareUrl}
+                              variant="button"
+                              label="Share Job"
+                              className="rounded-lg"
+                            />
+                          </div>
 
                           <span className="min-h-[40px] px-3 py-2 text-xs sm:text-sm font-semibold text-[#062856] group-hover:text-[#9A6F04] inline-flex items-center gap-1.5 transition-colors">
                             <span>View Job Details</span>

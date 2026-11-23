@@ -404,20 +404,29 @@ export function LiveJobsSection({
                   </div>
 
                   {/* Card Footer CTAs */}
-                  <div className="mt-5 pt-4 border-t border-slate-100 flex items-center gap-2.5">
+                  <div className="mt-5 pt-4 border-t border-slate-100 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onApplyJob(job);
                       }}
-                      className="flex-1 min-h-[42px] px-4 py-2 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      className="flex-1 min-h-[42px] px-3.5 py-2 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                     >
                       <Send className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
                       <span>Apply Now</span>
                     </button>
 
-                    <span className="min-h-[42px] px-3.5 py-2 rounded-xl border border-[#D4AF37]/60 bg-[#FBF4DC]/60 group-hover:bg-[#D4AF37] text-[#062856] font-bold text-xs sm:text-sm inline-flex items-center justify-center transition-colors whitespace-nowrap">
+                    <SocialShareMenu
+                      title={job.title}
+                      text={shareText}
+                      url={shareUrl}
+                      variant="button"
+                      label="Share Job"
+                      className="min-h-[42px] px-3"
+                    />
+
+                    <span className="min-h-[42px] px-3 py-2 rounded-xl border border-[#D4AF37]/60 bg-[#FBF4DC]/60 group-hover:bg-[#D4AF37] text-[#062856] font-bold text-xs sm:text-sm inline-flex items-center justify-center transition-colors whitespace-nowrap">
                       Details
                     </span>
                   </div>

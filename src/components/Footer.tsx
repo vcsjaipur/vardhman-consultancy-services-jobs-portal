@@ -1,9 +1,16 @@
-import { useState } from 'react';
-import { ExternalLink, FileUp, Linkedin, Mail } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ExternalLink, Eye, FileUp, Globe, Linkedin, Loader2, Mail } from 'lucide-react';
 import {
   FOOTER_SOCIAL_LINKS,
   OFFICIAL_EMAIL,
 } from '../utils/jobHelpers';
+import {
+  applyWebsiteLanguage,
+  getSavedLanguage,
+  stopLanguageObserver,
+  SUPPORTED_LANGUAGES,
+} from '../utils/languageTranslator';
+import { getOrCreateVisitorId } from '../utils/candidateApi';
 import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 interface FooterProps {
@@ -30,7 +37,77 @@ export function Footer({
   onSubmitResume,
 }: FooterProps) {
   const [logoError, setLogoError] = useState(false);
+  const [selectedLang, setSelectedLang] = useState<string>(() => getSavedLanguage());
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [dailyVisitors, setDailyVisitors] = useState<number | null>(null);
   const currentYear = new Date().getFullYear();
+
+  useEffect(() => {
+    const initialLang = getSavedLanguage();
+    if (initialLang && initialLang !== 'en') {
+      setIsTranslating(true);
+      void applyWebsiteLanguage(initialLang).finally(() => {
+        setIsTranslating(false);
+      });
+    }
+    return () => {
+      stopLanguageObserver();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const visitorId = getOrCreateVisitorId();
+    const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const trackedSessionKey = `vcs_daily_visit_tracked_${todayKey}`;
+    const alreadyTracked =
+      typeof window !== 'undefined' &&
+      window.sessionStorage?.getItem(trackedSessionKey) === '1';
+
+    const syncDailyCounter = async () => {
+      try {
+        const res = alreadyTracked
+          ? await fetch('/api/public/daily-visitors')
+          : await fetch('/api/public/daily-visitors/hit', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Visitor-Id': visitorId,
+              },
+              body: JSON.stringify({ visitorId }),
+            });
+        if (!res.ok) return;
+        const data = (await res.json()) as { dailyVisitors?: number };
+        if (!alreadyTracked && typeof window !== 'undefined') {
+          try {
+            window.sessionStorage?.setItem(trackedSessionKey, '1');
+          } catch {
+            // Ignore sessionStorage errors
+          }
+        }
+        if (active && typeof data.dailyVisitors === 'number') {
+          setDailyVisitors(data.dailyVisitors);
+        }
+      } catch {
+        // Ignore transient network errors for footer counter
+      }
+    };
+
+    void syncDailyCounter();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleLanguageChange = async (nextLang: string) => {
+    setSelectedLang(nextLang);
+    setIsTranslating(true);
+    try {
+      await applyWebsiteLanguage(nextLang);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
 
   const quickLinks = [
     { label: 'Home', action: onNavigateHome },
@@ -181,14 +258,66 @@ export function Footer({
           </div>
         </div>
 
-        {/* Copyright Row */}
-        <div className="pt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
-          <p>
-            © {currentYear} JobsNia.com · A Venture of Vardhman Consultancy Services. All Rights Reserved.
-          </p>
-          <p className="text-slate-400">
-            100% Free Placement Services for Every Candidate · Jaipur, India
-          </p>
+        {/* Footer Bottom Row: Copyright + Language Converter + Daily Visitor Counter */}
+        <div className="pt-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs text-slate-400">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <p>
+              © {currentYear} JobsNia.com · A Venture of Vardhman Consultancy Services. All Rights Reserved.
+            </p>
+            <span className="hidden sm:inline text-slate-600" aria-hidden="true">
+              |
+            </span>
+            <p className="text-slate-400">
+              100% Free Placement Services for Every Candidate · Jaipur, India
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {/* Daily Visitor Counter (Footer Bottom Only) */}
+            <div
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 border border-white/15 text-slate-200"
+              title="Unique Daily Visitors Today"
+            >
+              <Eye className="w-3.5 h-3.5 text-[#F6D574] shrink-0" aria-hidden="true" />
+              <span className="text-slate-300">Daily Visitors:</span>
+              <span className="font-bold text-white tabular-nums">
+                {dailyVisitors !== null ? dailyVisitors.toLocaleString('en-IN') : '—'}
+              </span>
+            </div>
+
+            {/* Language Converter (Footer Bottom Only) */}
+            <div
+              data-no-translate="true"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/8 border border-white/15 text-slate-200"
+            >
+              {isTranslating ? (
+                <Loader2 className="w-3.5 h-3.5 text-[#F6D574] animate-spin shrink-0" aria-hidden="true" />
+              ) : (
+                <Globe className="w-3.5 h-3.5 text-[#F6D574] shrink-0" aria-hidden="true" />
+              )}
+              <label htmlFor="footer-language-converter" className="sr-only">
+                Language Converter
+              </label>
+              <select
+                id="footer-language-converter"
+                value={selectedLang}
+                disabled={isTranslating}
+                onChange={(e) => void handleLanguageChange(e.target.value)}
+                aria-label="Language Converter"
+                className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer pr-1"
+              >
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <option
+                    key={lang.code}
+                    value={lang.code}
+                    className="bg-[#041C3F] text-white"
+                  >
+                    {lang.nativeLabel}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
       </div>
     </footer>

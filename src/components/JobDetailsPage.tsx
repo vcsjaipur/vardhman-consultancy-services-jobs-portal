@@ -362,7 +362,15 @@ export function JobDetailsPage({
               </div>
             </div>
 
-            <div className="hidden md:flex items-center shrink-0">
+            <div className="hidden md:flex items-center gap-2.5 shrink-0">
+              <SocialShareMenu
+                title={job.title}
+                text={shareText}
+                url={shareUrl}
+                variant="button"
+                label="Share Job"
+                className="min-h-[48px] px-4 py-3 text-sm"
+              />
               <button
                 type="button"
                 onClick={() => onApplyJob(job)}
@@ -685,7 +693,7 @@ export function JobDetailsPage({
                 </div>
               </dl>
 
-              <div className="mt-5">
+              <div className="mt-5 space-y-2.5">
                 <button
                   type="button"
                   onClick={() => onApplyJob(job)}
@@ -694,6 +702,16 @@ export function JobDetailsPage({
                   <Send className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
                   <span>Apply Now</span>
                 </button>
+                <div className="w-full flex justify-center">
+                  <SocialShareMenu
+                    title={job.title}
+                    text={shareText}
+                    url={shareUrl}
+                    variant="button"
+                    label="Share Job"
+                    className="w-full min-h-[44px] px-5 py-2.5 text-sm"
+                  />
+                </div>
               </div>
             </div>
 
@@ -839,15 +857,23 @@ export function JobDetailsPage({
 
       {/* Mobile Sticky Apply Bar */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/98 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 shadow-lg">
-        <div className="grid grid-cols-1">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => onApplyJob(job)}
-            className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
+            className="flex-1 min-h-[46px] px-4 py-2.5 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
           >
             <Send className="w-4 h-4 text-[#F6D574]" aria-hidden="true" />
             <span>Apply Now</span>
           </button>
+          <SocialShareMenu
+            title={job.title}
+            text={shareText}
+            url={shareUrl}
+            variant="button"
+            label="Share Job"
+            className="min-h-[46px] px-3.5"
+          />
         </div>
       </div>
     </div>
