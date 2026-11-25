@@ -9,6 +9,7 @@ import {
   onSnapshot,
   query,
   QueryDocumentSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc,
   startAfter,
@@ -963,3 +964,115 @@ export function subscribeCandidateResumeGodamFromFirestore(
   );
 }
 
+export function getIstDateKey(now: Date = new Date()): string {
+  return now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function logNonFatalFirestoreFailure(
+  error: unknown,
+  operationType: OperationType,
+  path: string
+): void {
+  try {
+    handleFirestoreError(error, operationType, path);
+  } catch {
+    // Logged cleanly via handleFirestoreError without crashing the page
+  }
+}
+
+export function subscribeDailyVisitorsFromFirestore(
+  dateKey: string,
+  onUpdate: (count: number) => void,
+  onError?: (error: unknown) => void
+): Unsubscribe {
+  const cleanDateKey = /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
+    ? dateKey
+    : getIstDateKey();
+  const path = `daily_visitors/${cleanDateKey}`;
+
+  return onSnapshot(
+    doc(db, 'daily_visitors', cleanDateKey),
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onUpdate(0);
+        return;
+      }
+      const rawCount = snapshot.data()?.count;
+      const count = typeof rawCount === 'number' && Number.isFinite(rawCount)
+        ? Math.max(0, Math.floor(rawCount))
+        : 0;
+      onUpdate(count);
+    },
+    (error) => {
+      logNonFatalFirestoreFailure(error, OperationType.GET, path);
+      onError?.(error);
+    }
+  );
+}
+
+export async function recordDailyVisitorHitInFirestore(
+  rawVisitorId: string,
+  dateKey: string = getIstDateKey()
+): Promise<number | null> {
+  const cleanDateKey = /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
+    ? dateKey
+    : getIstDateKey();
+  const cleanVisitorId = sanitizeId(rawVisitorId);
+  const boundedVisitorId =
+    cleanVisitorId.length >= 8
+      ? cleanVisitorId.slice(0, 64)
+      : `${cleanVisitorId}_visitor`.slice(0, 64);
+  const hitId = `${cleanDateKey}_${boundedVisitorId}`.slice(0, 128);
+  const summaryRef = doc(db, 'daily_visitors', cleanDateKey);
+  const hitRef = doc(db, 'daily_visitor_hits', hitId);
+
+  try {
+    const nextCount = await runTransaction(db, async (transaction) => {
+      const hitSnap = await transaction.get(hitRef);
+      const summarySnap = await transaction.get(summaryRef);
+      const existingCount =
+        summarySnap.exists() && typeof summarySnap.data()?.count === 'number'
+          ? Math.max(0, Math.floor(summarySnap.data().count))
+          : 0;
+
+      if (hitSnap.exists()) {
+        return existingCount;
+      }
+
+      const updatedCount = summarySnap.exists() ? existingCount + 1 : 1;
+
+      transaction.set(hitRef, {
+        id: hitId,
+        date: cleanDateKey,
+        visitorId: boundedVisitorId,
+        createdAt: serverTimestamp(),
+      });
+
+      if (!summarySnap.exists()) {
+        transaction.set(summaryRef, {
+          date: cleanDateKey,
+          count: 1,
+          lastHitId: hitId,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        transaction.update(summaryRef, {
+          count: updatedCount,
+          lastHitId: hitId,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      return updatedCount;
+    });
+
+    return nextCount;
+  } catch (error) {
+    logNonFatalFirestoreFailure(
+      error,
+      OperationType.WRITE,
+      `daily_visitors/${cleanDateKey}`
+    );
+    return null;
+  }
+}

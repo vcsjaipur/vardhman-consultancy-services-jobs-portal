@@ -581,6 +581,71 @@
         "status",
         "createdAt"
       ]
+    },
+    "DailyVisitorSummary": {
+      "title": "DailyVisitorSummary",
+      "description": "Real-time daily unique visitor count per IST date (Zero PII).",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "IST date key (YYYY-MM-DD)",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "count": {
+          "type": "number",
+          "description": "Unique daily visitor count for the IST date"
+        },
+        "lastHitId": {
+          "type": "string",
+          "description": "Most recent daily_visitor_hits document ID written atomically",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest unique visitor increment"
+        }
+      },
+      "required": ["date", "count", "lastHitId", "updatedAt"]
+    },
+    "DailyVisitorHit": {
+      "title": "DailyVisitorHit",
+      "description": "Deduplication record for a single anonymous browser visitor ID per IST day (Zero PII).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Deterministic hit ID formatted as {date}_{visitorId}",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "description": "IST date key (YYYY-MM-DD)",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "visitorId": {
+          "type": "string",
+          "description": "Anonymous client visitor token",
+          "minLength": 8,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when visit was recorded"
+        }
+      },
+      "required": ["id", "date", "visitorId", "createdAt"]
     }
   },
   "firestore": {
@@ -607,6 +672,14 @@
     "/resume_godam/{entryId}": {
       "schema": { "$ref": "#/entities/ResumeGodamEntry" },
       "description": "Complete portal-submitted candidate applications and PDF resumes readable only by Admin or submitting candidate."
+    },
+    "/daily_visitors/{dateKey}": {
+      "schema": { "$ref": "#/entities/DailyVisitorSummary" },
+      "description": "Real-time daily visitor summary counter per IST date."
+    },
+    "/daily_visitor_hits/{hitId}": {
+      "schema": { "$ref": "#/entities/DailyVisitorHit" },
+      "description": "Per-day unique visitor deduplication markers paired atomically with daily_visitors."
     }
   }
 }

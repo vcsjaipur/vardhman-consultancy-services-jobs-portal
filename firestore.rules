@@ -20,6 +20,12 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidDateKey(dateKey) {
+      return dateKey is string &&
+        dateKey.size() == 10 &&
+        dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -353,6 +359,31 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidDailyVisitorSummary(data, dateKey) {
+      return data.keys().hasAll(['date', 'count', 'lastHitId', 'updatedAt']) &&
+        data.keys().hasOnly(['date', 'count', 'lastHitId', 'updatedAt']) &&
+        isValidDateKey(data.date) &&
+        data.date == dateKey &&
+        data.count is int &&
+        data.count >= 1 &&
+        data.count <= 10000000 &&
+        isValidId(data.lastHitId) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDailyVisitorHit(data, hitId) {
+      return data.keys().hasAll(['id', 'date', 'visitorId', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'date', 'visitorId', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == hitId &&
+        isValidDateKey(data.date) &&
+        isValidId(data.visitorId) &&
+        data.visitorId.size() >= 8 &&
+        data.visitorId.size() <= 64 &&
+        hitId == data.date + '_' + data.visitorId &&
+        data.createdAt is timestamp;
+    }
+
     // 1. Admins registry
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
@@ -552,6 +583,46 @@ service cloud.firestore {
     match /test/connection {
       allow get: if isAdmin();
       allow list, write: if false;
+    }
+
+    // 9. Daily Visitors Counter (/daily_visitors/{dateKey}) — Zero PII
+    match /daily_visitors/{dateKey} {
+      allow get: if isValidDateKey(dateKey);
+      allow list: if false;
+
+      allow create: if isValidDateKey(dateKey) &&
+        isValidDailyVisitorSummary(incoming(), dateKey) &&
+        incoming().count == 1 &&
+        incoming().updatedAt == request.time &&
+        !exists(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        existsAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        getAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)).data.date == dateKey;
+
+      allow update: if isValidDateKey(dateKey) &&
+        isValidDailyVisitorSummary(incoming(), dateKey) &&
+        incoming().date == existing().date &&
+        incoming().count == existing().count + 1 &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['count', 'lastHitId', 'updatedAt']) &&
+        !exists(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        existsAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        getAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)).data.date == dateKey;
+
+      allow delete: if false;
+    }
+
+    // 10. Unique Daily Visitor Deduplication Hits (/daily_visitor_hits/{hitId}) — Zero PII
+    match /daily_visitor_hits/{hitId} {
+      allow get: if isValidId(hitId);
+      allow list: if false;
+
+      allow create: if isValidId(hitId) &&
+        isValidDailyVisitorHit(incoming(), hitId) &&
+        incoming().createdAt == request.time &&
+        existsAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)) &&
+        getAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)).data.lastHitId == hitId;
+
+      allow update, delete: if false;
     }
   }
 }

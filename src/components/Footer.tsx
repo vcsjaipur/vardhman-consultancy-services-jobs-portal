@@ -11,6 +11,11 @@ import {
   SUPPORTED_LANGUAGES,
 } from '../utils/languageTranslator';
 import { getOrCreateVisitorId } from '../utils/candidateApi';
+import {
+  getIstDateKey,
+  recordDailyVisitorHitInFirestore,
+  subscribeDailyVisitorsFromFirestore,
+} from '../utils/firestorePortal';
 import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
 interface FooterProps {
@@ -40,6 +45,7 @@ export function Footer({
   const [selectedLang, setSelectedLang] = useState<string>(() => getSavedLanguage());
   const [isTranslating, setIsTranslating] = useState(false);
   const [dailyVisitors, setDailyVisitors] = useState<number | null>(null);
+  const [todayKey, setTodayKey] = useState<string>(() => getIstDateKey());
   const currentYear = new Date().getFullYear();
 
   useEffect(() => {
@@ -56,48 +62,99 @@ export function Footer({
   }, []);
 
   useEffect(() => {
+    const checkDateRollover = () => {
+      const nextKey = getIstDateKey();
+      setTodayKey((prev) => (prev === nextKey ? prev : nextKey));
+    };
+
+    const intervalId = window.setInterval(checkDateRollover, 30000);
+    window.addEventListener('focus', checkDateRollover);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkDateRollover();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', checkDateRollover);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
+    setDailyVisitors(null);
     const visitorId = getOrCreateVisitorId();
-    const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    const trackedSessionKey = `vcs_daily_visit_tracked_${todayKey}`;
+    const trackedSessionKey = `vcs_daily_visit_firestore_${todayKey}`;
     const alreadyTracked =
       typeof window !== 'undefined' &&
       window.sessionStorage?.getItem(trackedSessionKey) === '1';
 
-    const syncDailyCounter = async () => {
+    let receivedFirestoreUpdate = false;
+
+    const syncBackendFallback = async (recordHit: boolean) => {
       try {
-        const res = alreadyTracked
-          ? await fetch('/api/public/daily-visitors')
-          : await fetch('/api/public/daily-visitors/hit', {
+        const res = recordHit
+          ? await fetch('/api/public/daily-visitors/hit', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'X-Visitor-Id': visitorId,
               },
               body: JSON.stringify({ visitorId }),
-            });
-        if (!res.ok) return;
+            })
+          : await fetch('/api/public/daily-visitors');
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) return;
         const data = (await res.json()) as { dailyVisitors?: number };
-        if (!alreadyTracked && typeof window !== 'undefined') {
+        if (active && !receivedFirestoreUpdate && typeof data.dailyVisitors === 'number') {
+          setDailyVisitors(data.dailyVisitors);
+        }
+      } catch {
+        // Ignore when running on static Firebase Hosting without /api backend
+      }
+    };
+
+    const unsubscribe = subscribeDailyVisitorsFromFirestore(
+      todayKey,
+      (count) => {
+        if (!active) return;
+        receivedFirestoreUpdate = true;
+        setDailyVisitors((prev) => {
+          if (count === 0 && prev !== null && prev > 0) {
+            return prev;
+          }
+          return count;
+        });
+      },
+      () => {
+        void syncBackendFallback(!alreadyTracked);
+      }
+    );
+
+    if (!alreadyTracked) {
+      void recordDailyVisitorHitInFirestore(visitorId, todayKey).then((nextCount) => {
+        if (!active) return;
+        if (typeof nextCount === 'number') {
           try {
             window.sessionStorage?.setItem(trackedSessionKey, '1');
           } catch {
             // Ignore sessionStorage errors
           }
+          setDailyVisitors((prev) => Math.max(prev ?? 0, nextCount));
+        } else {
+          void syncBackendFallback(true);
         }
-        if (active && typeof data.dailyVisitors === 'number') {
-          setDailyVisitors(data.dailyVisitors);
-        }
-      } catch {
-        // Ignore transient network errors for footer counter
-      }
-    };
+      });
+    }
 
-    void syncDailyCounter();
     return () => {
       active = false;
+      unsubscribe();
     };
-  }, []);
+  }, [todayKey]);
 
   const handleLanguageChange = async (nextLang: string) => {
     setSelectedLang(nextLang);

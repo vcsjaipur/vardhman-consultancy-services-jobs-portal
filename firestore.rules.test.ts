@@ -128,4 +128,16 @@ export const DIRTY_DOZEN_CASES: DirtyPayloadCase[] = [
     },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '14. Daily Visitor Counter Inflation Without Atomic +1 Hit',
+    collection: 'daily_visitors',
+    docId: '2026-11-25',
+    auth: null,
+    payload: {
+      date: '2026-11-25',
+      count: 99999,
+      lastHitId: 'fake_hit_1',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ];

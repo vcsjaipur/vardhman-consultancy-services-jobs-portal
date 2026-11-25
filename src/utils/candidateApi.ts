@@ -73,17 +73,40 @@ export class ApiRequestError extends Error {
   }
 }
 
+let inMemoryFallbackVisitorId: string | null = null;
+
 export function getOrCreateVisitorId(): string {
+  const createFreshId = () => {
+    const rand =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+        : Math.random().toString(36).slice(2, 12);
+    return `v_${Date.now().toString(36)}_${rand}`.slice(0, 64);
+  };
+
   try {
     const existing = window.localStorage.getItem(VISITOR_ID_STORAGE_KEY);
     if (existing && /^[a-zA-Z0-9_-]{8,64}$/.test(existing)) {
       return existing;
     }
-    const generated = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const generated = createFreshId();
     window.localStorage.setItem(VISITOR_ID_STORAGE_KEY, generated);
     return generated;
   } catch {
-    return 'v_session_fallback';
+    try {
+      const sessionExisting = window.sessionStorage.getItem(VISITOR_ID_STORAGE_KEY);
+      if (sessionExisting && /^[a-zA-Z0-9_-]{8,64}$/.test(sessionExisting)) {
+        return sessionExisting;
+      }
+      const generated = createFreshId();
+      window.sessionStorage.setItem(VISITOR_ID_STORAGE_KEY, generated);
+      return generated;
+    } catch {
+      if (!inMemoryFallbackVisitorId) {
+        inMemoryFallbackVisitorId = createFreshId();
+      }
+      return inMemoryFallbackVisitorId;
+    }
   }
 }
 
