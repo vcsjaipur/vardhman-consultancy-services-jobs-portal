@@ -25,7 +25,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
 const DESIGNATED_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'cvforvcs@gmail.com').trim().toLowerCase();
 const VCS_OFFICIAL_EMAIL = 'info@vardhmanconsultancy.com';
 const ADMIN_NOTIFICATION_CC = VCS_OFFICIAL_EMAIL;
-const GMAIL_SMTP_SENDER = 'contact2vardhmanconsultancy@gmail.com';
+const GMAIL_SMTP_SENDER = DESIGNATED_ADMIN_EMAIL;
 const CONFIDENTIAL_COMPANY_LABEL = 'Confidential - Apply via VCS';
 
 type UserRole = 'candidate' | 'employer' | 'admin';

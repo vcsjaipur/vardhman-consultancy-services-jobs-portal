@@ -244,7 +244,7 @@ async function apiRequest<T>(
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
   if (url.startsWith('/api') && !contentType.includes('application/json')) {
     throw new ApiRequestError(
-      'Backend email forwarding server is unavailable on this static host.',
+      'Server API is unavailable on this static host. Please use Continue with Google or configure VITE_API_BASE_URL.',
       503,
       'BACKEND_UNAVAILABLE'
     );

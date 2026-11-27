@@ -150,6 +150,12 @@ export function toFriendlyPortalError(
     return fallback;
   }
   const lower = trimmed.toLowerCase();
+  if (lower.includes('auth/unauthorized-domain')) {
+    return 'This domain is not authorized for Google Sign-In yet. Add both jobsnia.com and www.jobsnia.com in Firebase Console → Authentication → Settings → Authorized domains.';
+  }
+  if (lower.includes('auth/popup-blocked')) {
+    return 'Google Sign-In popup was blocked by your browser. Please allow popups for this site and try again.';
+  }
   if (
     lower.includes('firebase') ||
     lower.includes('firestore') ||
