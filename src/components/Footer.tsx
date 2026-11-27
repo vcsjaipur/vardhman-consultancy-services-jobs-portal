@@ -30,7 +30,6 @@ interface FooterProps {
   onNavigateInterviewTips: () => void;
   onNavigateJobSeekerTerms: () => void;
   onNavigateContactUs: () => void;
-  onNavigateAdminDashboard?: () => void;
   onSubmitResume?: () => void;
 }
 
@@ -43,7 +42,6 @@ export function Footer({
   onNavigateInterviewTips,
   onNavigateJobSeekerTerms,
   onNavigateContactUs,
-  onNavigateAdminDashboard,
   onSubmitResume,
 }: FooterProps) {
   const [logoError, setLogoError] = useState(false);
@@ -354,18 +352,6 @@ export function Footer({
             </span>
             <p className="text-slate-400">
               100% Free Placement Services for Every Candidate · Jaipur, India
-              {onNavigateAdminDashboard && (
-                <>
-                  {' · '}
-                  <button
-                    type="button"
-                    onClick={onNavigateAdminDashboard}
-                    className="text-[11px] text-slate-400/70 hover:text-slate-200 transition-colors cursor-pointer"
-                  >
-                    Jobsnia
-                  </button>
-                </>
-              )}
             </p>
           </div>
 

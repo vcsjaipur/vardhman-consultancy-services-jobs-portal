@@ -1782,10 +1782,6 @@ export default function App() {
         onNavigateInterviewTips={handleNavigateInterviewTips}
         onNavigateJobSeekerTerms={handleNavigateJobSeekerTerms}
         onNavigateContactUs={handleNavigateContactUs}
-        onNavigateAdminDashboard={() => {
-          loadAdminJobsList();
-          navigateToHashPage('admin-dashboard', '#admin-dashboard');
-        }}
         onSubmitResume={handleUploadResumeAction}
       />
 
