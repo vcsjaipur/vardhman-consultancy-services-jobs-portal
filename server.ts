@@ -5794,6 +5794,48 @@ async function startServer() {
     res.type('application/xml').send(xml);
   });
 
+  // Proxy Firebase Auth helper routes (/__/auth/* and /__/firebase/*) when custom authDomain routes through Node
+  app.use(['/__/auth', '/__/firebase'], async (req: Request, res: Response) => {
+    try {
+      const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+      const cfg = fs.existsSync(cfgPath)
+        ? (JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as { authDomain?: string })
+        : {};
+      const upstreamHost =
+        cfg.authDomain && /^[a-z0-9-]+\.firebaseapp\.com$/i.test(cfg.authDomain)
+          ? cfg.authDomain
+          : 'gen-lang-client-0995205990.firebaseapp.com';
+      const targetUrl = `https://${upstreamHost}${req.originalUrl}`;
+      const upstreamRes = await fetch(targetUrl, {
+        method: req.method,
+        headers: {
+          ...(req.headers['accept'] ? { accept: String(req.headers['accept']) } : {}),
+          ...(req.headers['content-type']
+            ? { 'content-type': String(req.headers['content-type']) }
+            : {}),
+        },
+        redirect: 'manual',
+      });
+      res.status(upstreamRes.status);
+      upstreamRes.headers.forEach((value, key) => {
+        const lowerKey = key.toLowerCase();
+        if (
+          lowerKey === 'content-encoding' ||
+          lowerKey === 'content-length' ||
+          lowerKey === 'transfer-encoding' ||
+          lowerKey === 'connection'
+        ) {
+          return;
+        }
+        res.setHeader(key, value);
+      });
+      const buf = Buffer.from(await upstreamRes.arrayBuffer());
+      res.send(buf);
+    } catch {
+      res.status(502).send('Auth handler unavailable');
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
