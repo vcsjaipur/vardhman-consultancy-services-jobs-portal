@@ -267,6 +267,7 @@ export interface SharedResumeProfileInput {
   workHistory?: string[] | null;
   resumeFileName?: string | null;
   resumeBase64?: string | null;
+  termsAccepted?: boolean;
 }
 
 export interface SharedCompanyRequirementInput {
@@ -687,6 +688,9 @@ export async function syncResumeProfileToSharedCandidates(
         `Qualification: ${qualification}`,
         `Skills: ${skillsList.join(', ')}`,
         `Work History: ${workHistoryList.join(' | ')}`,
+        input.termsAccepted !== undefined
+          ? `Terms Accepted: ${input.termsAccepted ? 'Yes (Terms & Conditions & Candidate Declaration Accepted)' : 'No'}`
+          : '',
         `Resume File: ${resumeFileName}`,
       ]
         .filter(Boolean)
@@ -1007,3 +1011,120 @@ export function subscribeSharedCompanyRequirements(
     }
   );
 }
+
+export interface SharedClientQueryRecord {
+  id: string;
+  name: string;
+  phone: string;
+  message: string;
+  status: string;
+  createdAt: string;
+}
+
+function mapClientQueryDocs(
+  docs: QueryDocumentSnapshot<DocumentData>[]
+): SharedClientQueryRecord[] {
+  return docs
+    .map((snap) => {
+      const d = snap.data();
+      return {
+        id: String(d.id || snap.id),
+        name: String(d.name || ''),
+        phone: String(d.phone || ''),
+        message: String(d.message || ''),
+        status: String(d.status || 'new'),
+        createdAt: formatFirestoreDate(d.createdAt),
+      };
+    })
+    .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
+}
+
+export function subscribeSharedClientQueries(
+  onUpdate: (entries: SharedClientQueryRecord[]) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(sharedDb, 'client_queries'),
+    (snapshot) => {
+      onUpdate(mapClientQueryDocs(snapshot.docs));
+    },
+    () => {
+      // Non-fatal if collection listener is unavailable offline
+    }
+  );
+}
+
+function mapSharedCandidateDocsToApplications(
+  docs: QueryDocumentSnapshot<DocumentData>[]
+): JobApplication[] {
+  return docs
+    .map((snap) => {
+      const d = snap.data();
+      const candId = String(d.id || snap.id);
+      const city = String(d.cityDistrict || d.state || '');
+      const qualification = String(d.education || '').trim();
+      const expYears =
+        typeof d.experienceYears === 'number' && d.experienceYears > 0
+          ? `${d.experienceYears} Yrs`
+          : '';
+      const qualificationExperience = [qualification, expYears]
+        .filter(Boolean)
+        .join(' · ');
+      const fullText = String(d.resumeFullText || '');
+      const hasTermsInText = fullText.toLowerCase().includes('terms accepted: yes');
+      return {
+        id: `cand_${candId}`,
+        candidateId: candId,
+        jobId: 'profile_registration',
+        jobTitle: String(d.currentRole || d.headline || 'Candidate Profile'),
+        companyMasked: CONFIDENTIAL_COMPANY_LABEL,
+        location: city,
+        city,
+        salary:
+          typeof d.expectedSalaryLpa === 'number' && d.expectedSalaryLpa > 0
+            ? `${d.expectedSalaryLpa} LPA`
+            : 'As per Industry Standards',
+        experience: qualificationExperience,
+        qualificationExperience,
+        resumeSummary: d.resumeSummary ? String(d.resumeSummary) : undefined,
+        applicantName: String(d.fullName || ''),
+        applicantEmail: String(d.email || ''),
+        applicantPhone: String(d.phone || ''),
+        resumeId: candId,
+        resumeFileName: String(d.uploadedFileName || ''),
+        resumeBase64:
+          typeof d.uploadedFileBase64 === 'string' && d.uploadedFileBase64
+            ? d.uploadedFileBase64
+            : undefined,
+        termsAccepted: hasTermsInText,
+        appliedAt: formatFirestoreDate(d.createdAt || d.updatedAt),
+        status: 'Submitted' as const,
+        source: 'shared-portal' as const,
+      };
+    })
+    .filter((entry) => Boolean(entry.applicantName || entry.applicantPhone || entry.applicantEmail))
+    .sort((a, b) => Date.parse(b.appliedAt || '') - Date.parse(a.appliedAt || ''));
+}
+
+export async function fetchSharedCandidatesAsApplications(): Promise<JobApplication[]> {
+  try {
+    const snap = await getDocs(collection(sharedDb, 'candidates'));
+    return mapSharedCandidateDocsToApplications(snap.docs);
+  } catch {
+    return [];
+  }
+}
+
+export function subscribeSharedCandidatesAsApplications(
+  onUpdate: (entries: JobApplication[]) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(sharedDb, 'candidates'),
+    (snapshot) => {
+      onUpdate(mapSharedCandidateDocsToApplications(snapshot.docs));
+    },
+    () => {
+      // Non-fatal if collection listener is unavailable offline
+    }
+  );
+}
+

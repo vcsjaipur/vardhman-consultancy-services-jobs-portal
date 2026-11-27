@@ -384,6 +384,21 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidSiteVisitorStats(data) {
+      return data.keys().hasAll(['id', 'count', 'todayDate', 'todayCount', 'lastHitId', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'count', 'todayDate', 'todayCount', 'lastHitId', 'updatedAt']) &&
+        data.id == 'visitors' &&
+        data.count is int &&
+        data.count >= 1 &&
+        data.count <= 100000000 &&
+        isValidDateKey(data.todayDate) &&
+        data.todayCount is int &&
+        data.todayCount >= 1 &&
+        data.todayCount <= 10000000 &&
+        isValidId(data.lastHitId) &&
+        data.updatedAt is timestamp;
+    }
+
     // 1. Admins registry
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
@@ -619,10 +634,61 @@ service cloud.firestore {
       allow create: if isValidId(hitId) &&
         isValidDailyVisitorHit(incoming(), hitId) &&
         incoming().createdAt == request.time &&
-        existsAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)) &&
-        getAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)).data.lastHitId == hitId;
+        (
+          (
+            existsAfter(/databases/$(database)/documents/site_stats/visitors) &&
+            getAfter(/databases/$(database)/documents/site_stats/visitors).data.lastHitId == hitId
+          ) ||
+          (
+            existsAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)) &&
+            getAfter(/databases/$(database)/documents/daily_visitors/$(incoming().date)).data.lastHitId == hitId
+          )
+        );
 
       allow update, delete: if false;
+    }
+
+    // 11. Cumulative Website Visitors Counter (/site_stats/{statId}) — Zero PII
+    match /site_stats/{statId} {
+      allow get: if isValidId(statId) && statId == 'visitors';
+      allow list: if false;
+
+      allow create: if isValidId(statId) &&
+        statId == 'visitors' &&
+        isValidSiteVisitorStats(incoming()) &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            !exists(/databases/$(database)/documents/daily_visitors/$(incoming().todayDate)) &&
+            incoming().count == 1 &&
+            incoming().todayCount == 1
+          ) ||
+          (
+            exists(/databases/$(database)/documents/daily_visitors/$(incoming().todayDate)) &&
+            incoming().count == get(/databases/$(database)/documents/daily_visitors/$(incoming().todayDate)).data.count + 1 &&
+            incoming().todayCount == incoming().count
+          )
+        ) &&
+        !exists(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        existsAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        getAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)).data.date == incoming().todayDate;
+
+      allow update: if isValidId(statId) &&
+        statId == 'visitors' &&
+        isValidSiteVisitorStats(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().count == existing().count + 1 &&
+        (
+          (incoming().todayDate == existing().todayDate && incoming().todayCount == existing().todayCount + 1) ||
+          (incoming().todayDate > existing().todayDate && incoming().todayCount == 1)
+        ) &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['count', 'todayDate', 'todayCount', 'lastHitId', 'updatedAt']) &&
+        !exists(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        existsAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)) &&
+        getAfter(/databases/$(database)/documents/daily_visitor_hits/$(incoming().lastHitId)).data.date == incoming().todayDate;
+
+      allow delete: if false;
     }
   }
 }

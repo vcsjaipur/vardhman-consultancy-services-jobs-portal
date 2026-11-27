@@ -75,6 +75,8 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Contact Us': 'संपर्क करें',
     'Open Inquiry Form': 'पूछताछ फॉर्म खोलें',
     'Daily Visitors:': 'दैनिक आगंतुक:',
+    'Total Visitors:': 'कुल आगंतुक:',
+    'Owner Desk': 'ओनर डेस्क',
     '100% Free Placement Services for Every Candidate · Jaipur, India': 'प्रत्येक उम्मीदवार के लिए 100% निःशुल्क प्लेसमेंट सेवाएं · जयपुर, भारत',
     'View Job Details': 'नौकरी का विवरण देखें',
     'Back to Jobs': 'नौकरियों पर वापस जाएं',
@@ -101,6 +103,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Quick Links': 'त्वरित दुवे',
     'Contact Desk': 'संपर्क डेस्क',
     'Daily Visitors:': 'दैनिक भेट देणारे:',
+    'Total Visitors:': 'एकूण भेट देणारे:',
   },
   gu: {
     'Jobs': 'નોકરીઓ',
@@ -122,6 +125,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Quick Links': 'ઝડપી લિંક્સ',
     'Contact Desk': 'સંપર્ક ડેસ્ક',
     'Daily Visitors:': 'દૈનિક મુલાકાતીઓ:',
+    'Total Visitors:': 'કુલ મુલાકાતીઓ:',
   },
   ta: {
     'Jobs': 'வேலைகள்',
@@ -141,6 +145,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'வேலை பதிவிடவும்',
     'Submit Resume': 'விண்ணப்பம் சமர்ப்பிக்கவும்',
     'Daily Visitors:': 'தினசரி பார்வையாளர்கள்:',
+    'Total Visitors:': 'மொத்த பார்வையாளர்கள்:',
   },
   te: {
     'Jobs': 'ఉద్యోగాలు',
@@ -160,6 +165,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'ఉద్యోగాన్ని పోస్ట్ చేయండి',
     'Submit Resume': 'రెజ్యూమ్ సమర్పించండి',
     'Daily Visitors:': 'రోజువారీ సందర్శకులు:',
+    'Total Visitors:': 'మొత్తం సందర్శకులు:',
   },
   bn: {
     'Jobs': 'চাকরি',
@@ -179,6 +185,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'চাকরি পোস্ট করুন',
     'Submit Resume': 'জীবনবৃত্তান্ত জমা দিন',
     'Daily Visitors:': 'দৈনিক দর্শক:',
+    'Total Visitors:': 'মোট দর্শক:',
   },
   pa: {
     'Jobs': 'ਨੌਕਰੀਆਂ',
@@ -196,6 +203,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'ਨੌਕਰੀ ਪੋਸਟ ਕਰੋ',
     'Submit Resume': 'ਰੈਜ਼ਿਊਮੇ ਜਮ੍ਹਾਂ ਕਰੋ',
     'Daily Visitors:': 'ਰੋਜ਼ਾਨਾ ਦਰਸ਼ਕ:',
+    'Total Visitors:': 'ਕੁੱਲ ਦਰਸ਼ਕ:',
   },
   kn: {
     'Jobs': 'ಉದ್ಯೋಗಗಳು',
@@ -212,6 +220,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Details': 'ವಿವರಗಳು',
     'Post A Job': 'ಉದ್ಯೋಗ ಪೋಸ್ಟ್ ಮಾಡಿ',
     'Daily Visitors:': 'ದೈನಂದಿನ ಸಂದರ್ಶಕರು:',
+    'Total Visitors:': 'ಒಟ್ಟು ಸಂದರ್ಶಕರು:',
   },
   ml: {
     'Jobs': 'ജോലികൾ',
@@ -228,6 +237,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Details': 'വിശദാംശങ്ങൾ',
     'Post A Job': 'ജോലി പോസ്റ്റ് ചെയ്യുക',
     'Daily Visitors:': 'പ്രതിദിന സന്ദർശകർ:',
+    'Total Visitors:': 'ആകെ സന്ദർശകർ:',
   },
   ur: {
     'Jobs': 'نوکریاں',
@@ -244,6 +254,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Details': 'تفصیلات',
     'Post A Job': 'نوکری پوسٹ کریں',
     'Daily Visitors:': 'روزانہ زائرین:',
+    'Total Visitors:': 'کل زائرین:',
   },
   es: {
     'Jobs': 'Empleos',
@@ -263,6 +274,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'Publicar Empleo',
     'Submit Resume': 'Enviar Currículum',
     'Daily Visitors:': 'Visitantes Diarios:',
+    'Total Visitors:': 'Visitantes Totales:',
   },
   fr: {
     'Jobs': 'Emplois',
@@ -282,6 +294,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'Publier une Offre',
     'Submit Resume': 'Envoyer CV',
     'Daily Visitors:': 'Visiteurs du jour :',
+    'Total Visitors:': 'Visiteurs totaux :',
   },
   ar: {
     'Jobs': 'الوظائف',
@@ -301,6 +314,7 @@ const BUILTIN_DICTIONARY: Record<string, Record<string, string>> = {
     'Post A Job': 'أعلن عن وظيفة',
     'Submit Resume': 'إرسال السيرة الذاتية',
     'Daily Visitors:': 'الزوار اليوميون:',
+    'Total Visitors:': 'إجمالي الزوار:',
   },
 };
 

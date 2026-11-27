@@ -380,6 +380,7 @@ export function RegisterPage({
           resumeFile.base64.length <= MAX_SHARED_RESUME_BASE64_CHARS
             ? resumeFile.base64
             : '',
+        termsAccepted: true,
       }).catch(() => null);
       clearFormDraft(REGISTER_DRAFT_KEY);
       onSuccess(candidate);
@@ -504,9 +505,11 @@ export function RegisterPage({
         }
       }
 
-      if (role === 'employer' && (currentRequirements.trim() || jdFile || initialJob)) {
+      if (role === 'employer') {
         const jdBody = [
-          currentRequirements.trim() || initialJob?.description || '',
+          currentRequirements.trim() ||
+            initialJob?.description ||
+            'Employer registered on portal (Detailed JD pending)',
           jdFile ? `Attached JD File: ${jdFile.fileName}` : '',
           `Official Email: ${cleanEmail}`,
           `Address: ${fullAddress.trim()}`,
@@ -520,7 +523,7 @@ export function RegisterPage({
           phone: cleanPhone || cleanEmail,
           city: city.trim() || fullAddress.trim() || 'Pan India',
           postRequired:
-            initialJob?.title || `${companyName.trim()} Hiring Requirement`,
+            initialJob?.title || `${companyName.trim()} — Employer Registration`,
           salary: initialJob?.salary || 'Negotiable',
           vacancyCount: initialJob?.openings || 1,
           jobDescription: jdBody,

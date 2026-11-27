@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin-dashboard
+Disallow: /dashboard
+Disallow: /employer-dashboard
+Disallow: /api/
+
+Sitemap: https://www.jobsnia.com/sitemap.xml

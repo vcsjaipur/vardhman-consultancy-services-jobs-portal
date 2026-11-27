@@ -646,6 +646,46 @@
         }
       },
       "required": ["id", "date", "visitorId", "createdAt"]
+    },
+    "SiteVisitorStats": {
+      "title": "SiteVisitorStats",
+      "description": "Cumulative running total website visitor counter across all days (Zero PII).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Singleton stat document ID ('visitors')",
+          "enum": ["visitors"]
+        },
+        "count": {
+          "type": "number",
+          "description": "Cumulative total unique daily visitors across all dates"
+        },
+        "todayDate": {
+          "type": "string",
+          "description": "Current IST date key (YYYY-MM-DD)",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "todayCount": {
+          "type": "number",
+          "description": "Unique visitors recorded on todayDate"
+        },
+        "lastHitId": {
+          "type": "string",
+          "description": "Most recent daily_visitor_hits document ID written atomically",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest unique visitor increment"
+        }
+      },
+      "required": ["id", "count", "todayDate", "todayCount", "lastHitId", "updatedAt"]
     }
   },
   "firestore": {
@@ -679,7 +719,11 @@
     },
     "/daily_visitor_hits/{hitId}": {
       "schema": { "$ref": "#/entities/DailyVisitorHit" },
-      "description": "Per-day unique visitor deduplication markers paired atomically with daily_visitors."
+      "description": "Per-day unique visitor deduplication markers paired atomically with daily_visitors or site_stats."
+    },
+    "/site_stats/{statId}": {
+      "schema": { "$ref": "#/entities/SiteVisitorStats" },
+      "description": "Cumulative running website visitor counter paired atomically with daily_visitor_hits."
     }
   }
 }

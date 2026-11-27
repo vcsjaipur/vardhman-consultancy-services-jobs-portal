@@ -184,6 +184,10 @@ export async function flushOfflineApiOutbox(): Promise<void> {
   const queue = readApiOutbox();
   if (queue.length === 0) return;
 
+  const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '')
+    .trim()
+    .replace(/\/+$/, '');
+
   apiFlushPromise = (async () => {
     const remaining: OfflineApiQueueItem[] = [];
     for (const item of queue) {
@@ -199,12 +203,18 @@ export async function flushOfflineApiOutbox(): Promise<void> {
             headers.set('Authorization', `Bearer ${token}`);
           }
         }
-        const res = await fetch(item.url, {
+        const targetUrl =
+          item.url.startsWith('/api') && apiBaseUrl ? `${apiBaseUrl}${item.url}` : item.url;
+        const res = await fetch(targetUrl, {
           method: item.method,
           headers,
           body: item.body,
         });
-        if (!res.ok && res.status >= 500) {
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (
+          (item.url.startsWith('/api') && !contentType.includes('application/json')) ||
+          (!res.ok && res.status >= 500)
+        ) {
           remaining.push(item);
         }
       } catch {

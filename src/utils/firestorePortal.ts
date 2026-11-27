@@ -24,6 +24,7 @@ import {
   JobApplication,
   JobApprovalStatus,
   JobListing,
+  UserRole,
 } from '../types/portal';
 import { CONFIDENTIAL_COMPANY_LABEL } from './jobHelpers';
 
@@ -1076,3 +1077,277 @@ export async function recordDailyVisitorHitInFirestore(
     return null;
   }
 }
+
+export interface SiteVisitorStats {
+  totalCount: number;
+  todayCount: number;
+  todayDate: string;
+}
+
+const VISITOR_STATS_CACHE_KEY = 'vcs_cumulative_visitor_stats_v1';
+
+export function getCachedVisitorStats(): SiteVisitorStats | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(VISITOR_STATS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SiteVisitorStats>;
+    if (typeof parsed.totalCount !== 'number' || !Number.isFinite(parsed.totalCount)) {
+      return null;
+    }
+    const currentIstKey = getIstDateKey();
+    const todayDate =
+      typeof parsed.todayDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.todayDate)
+        ? parsed.todayDate
+        : currentIstKey;
+    return {
+      totalCount: Math.max(0, Math.floor(parsed.totalCount)),
+      todayCount:
+        todayDate === currentIstKey && typeof parsed.todayCount === 'number'
+          ? Math.max(0, Math.floor(parsed.todayCount))
+          : 0,
+      todayDate: currentIstKey,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveCachedVisitorStats(stats: SiteVisitorStats): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const existing = getCachedVisitorStats();
+    const merged: SiteVisitorStats = {
+      totalCount: Math.max(existing?.totalCount ?? 0, Math.max(0, Math.floor(stats.totalCount))),
+      todayCount: Math.max(0, Math.floor(stats.todayCount)),
+      todayDate: stats.todayDate,
+    };
+    window.localStorage.setItem(VISITOR_STATS_CACHE_KEY, JSON.stringify(merged));
+  } catch {
+    // Ignore localStorage quota/private-mode errors
+  }
+}
+
+export function subscribeCumulativeVisitorsFromFirestore(
+  onUpdate: (stats: SiteVisitorStats) => void,
+  onError?: (error: unknown) => void
+): Unsubscribe {
+  const path = 'site_stats/visitors';
+
+  return onSnapshot(
+    doc(db, 'site_stats', 'visitors'),
+    (snapshot) => {
+      const currentIstKey = getIstDateKey();
+      const cached = getCachedVisitorStats();
+
+      if (!snapshot.exists()) {
+        void getDoc(doc(db, 'daily_visitors', currentIstKey))
+          .then((dailySnap) => {
+            const seedCount =
+              dailySnap.exists() && typeof dailySnap.data()?.count === 'number'
+                ? Math.max(0, Math.floor(dailySnap.data().count))
+                : 0;
+            const nextStats: SiteVisitorStats = {
+              totalCount: Math.max(cached?.totalCount ?? 0, seedCount),
+              todayCount: seedCount,
+              todayDate: currentIstKey,
+            };
+            if (nextStats.totalCount > 0) {
+              saveCachedVisitorStats(nextStats);
+            }
+            onUpdate(nextStats);
+          })
+          .catch(() => {
+            if (cached) {
+              onUpdate(cached);
+            } else {
+              onUpdate({ totalCount: 0, todayCount: 0, todayDate: currentIstKey });
+            }
+          });
+        return;
+      }
+
+      const data = snapshot.data();
+      const firestoreTotal =
+        typeof data?.count === 'number' && Number.isFinite(data.count)
+          ? Math.max(0, Math.floor(data.count))
+          : 0;
+      const todayDate =
+        typeof data?.todayDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.todayDate)
+          ? data.todayDate
+          : currentIstKey;
+      const todayCount =
+        todayDate === currentIstKey &&
+        typeof data?.todayCount === 'number' &&
+        Number.isFinite(data.todayCount)
+          ? Math.max(0, Math.floor(data.todayCount))
+          : 0;
+
+      const nextStats: SiteVisitorStats = {
+        totalCount: firestoreTotal > 0 ? firestoreTotal : (cached?.totalCount ?? 0),
+        todayCount,
+        todayDate: currentIstKey,
+      };
+      if (nextStats.totalCount > 0) {
+        saveCachedVisitorStats(nextStats);
+      }
+      onUpdate(nextStats);
+    },
+    (error) => {
+      logNonFatalFirestoreFailure(error, OperationType.GET, path);
+      onError?.(error);
+    }
+  );
+}
+
+export async function recordCumulativeVisitorHitInFirestore(
+  rawVisitorId: string,
+  dateKey: string = getIstDateKey()
+): Promise<SiteVisitorStats | null> {
+  const cleanDateKey = /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
+    ? dateKey
+    : getIstDateKey();
+  const cleanVisitorId = sanitizeId(rawVisitorId);
+  const boundedVisitorId =
+    cleanVisitorId.length >= 8
+      ? cleanVisitorId.slice(0, 64)
+      : `${cleanVisitorId}_visitor`.slice(0, 64);
+  const hitId = `${cleanDateKey}_${boundedVisitorId}`.slice(0, 128);
+  const statsRef = doc(db, 'site_stats', 'visitors');
+  const dailySummaryRef = doc(db, 'daily_visitors', cleanDateKey);
+  const hitRef = doc(db, 'daily_visitor_hits', hitId);
+
+  try {
+    const result = await runTransaction(db, async (transaction) => {
+      const hitSnap = await transaction.get(hitRef);
+      const statsSnap = await transaction.get(statsRef);
+      const dailySnap = !statsSnap.exists()
+        ? await transaction.get(dailySummaryRef)
+        : null;
+
+      const currentTotal =
+        statsSnap.exists() && typeof statsSnap.data()?.count === 'number'
+          ? Math.max(0, Math.floor(statsSnap.data().count))
+          : 0;
+      const existingTodayDate =
+        statsSnap.exists() && typeof statsSnap.data()?.todayDate === 'string'
+          ? String(statsSnap.data().todayDate)
+          : '';
+      const existingTodayCount =
+        statsSnap.exists() &&
+        existingTodayDate === cleanDateKey &&
+        typeof statsSnap.data()?.todayCount === 'number'
+          ? Math.max(0, Math.floor(statsSnap.data().todayCount))
+          : 0;
+
+      if (hitSnap.exists()) {
+        return {
+          totalCount: currentTotal,
+          todayCount: existingTodayCount,
+          todayDate: cleanDateKey,
+        };
+      }
+
+      transaction.set(hitRef, {
+        id: hitId,
+        date: cleanDateKey,
+        visitorId: boundedVisitorId,
+        createdAt: serverTimestamp(),
+      });
+
+      if (!statsSnap.exists()) {
+        const seedFromToday =
+          dailySnap?.exists() && typeof dailySnap.data()?.count === 'number'
+            ? Math.max(0, Math.floor(dailySnap.data().count))
+            : 0;
+        const initialCount = seedFromToday + 1;
+        transaction.set(statsRef, {
+          id: 'visitors',
+          count: initialCount,
+          todayDate: cleanDateKey,
+          todayCount: initialCount,
+          lastHitId: hitId,
+          updatedAt: serverTimestamp(),
+        });
+        return {
+          totalCount: initialCount,
+          todayCount: initialCount,
+          todayDate: cleanDateKey,
+        };
+      }
+
+      const nextTotal = currentTotal + 1;
+      const nextTodayCount =
+        existingTodayDate === cleanDateKey ? existingTodayCount + 1 : 1;
+
+      transaction.update(statsRef, {
+        count: nextTotal,
+        todayDate: cleanDateKey,
+        todayCount: nextTodayCount,
+        lastHitId: hitId,
+        updatedAt: serverTimestamp(),
+      });
+
+      return {
+        totalCount: nextTotal,
+        todayCount: nextTodayCount,
+        todayDate: cleanDateKey,
+      };
+    });
+
+    if (result.totalCount > 0) {
+      saveCachedVisitorStats(result);
+    }
+    return result;
+  } catch (error) {
+    logNonFatalFirestoreFailure(error, OperationType.WRITE, 'site_stats/visitors');
+    return null;
+  }
+}
+
+export function subscribeAdminUsersFromFirestore(
+  onUpdate: (users: CandidateProfile[]) => void
+): Unsubscribe {
+  const path = 'users';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const mapped: CandidateProfile[] = [...snapshot.docs]
+        .sort(
+          (a, b) =>
+            parseTimestampMs(b.data().createdAt) - parseTimestampMs(a.data().createdAt)
+        )
+        .map((snap) => {
+          const d = snap.data();
+          const roleRaw = String(d.role || 'candidate').toLowerCase();
+          const role: UserRole =
+            roleRaw === 'employer'
+              ? 'employer'
+              : roleRaw === 'admin'
+                ? 'admin'
+                : 'candidate';
+          return {
+            id: String(d.uid || snap.id),
+            role,
+            name: String(d.name || ''),
+            email: String(d.email || ''),
+            phone: String(d.phone || ''),
+            city: String(d.city || ''),
+            experience: String(d.experience || ''),
+            companyName: typeof d.companyName === 'string' ? d.companyName : null,
+            resumeId: null,
+            resumeFileName:
+              typeof d.resumeFileName === 'string' ? d.resumeFileName : null,
+            resumeUpdatedAt: null,
+            createdAt: formatFirestoreDate(d.createdAt),
+            termsAccepted: role === 'candidate',
+          };
+        });
+      onUpdate(mapped);
+    },
+    (error) => {
+      logNonFatalFirestoreFailure(error, OperationType.LIST, path);
+    }
+  );
+}
+

@@ -140,4 +140,18 @@ export const DIRTY_DOZEN_CASES: DirtyPayloadCase[] = [
     },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '15. Cumulative Site Stats Reset or Inflation Without Atomic +1 Hit',
+    collection: 'site_stats',
+    docId: 'visitors',
+    auth: null,
+    payload: {
+      id: 'visitors',
+      count: 1,
+      todayDate: '2026-11-26',
+      todayCount: 500,
+      lastHitId: 'fake_hit_2',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ];

@@ -279,6 +279,8 @@ interface StoredEmailDispatch {
   text: string;
   deliveredVia: 'smtp' | 'queued';
   environmentMode?: 'published-domain' | 'dev-gmail';
+  smtpHostUsed?: string | null;
+  lastError?: string | null;
   relatedEntityId: string;
   createdAt: string;
 }
@@ -297,6 +299,7 @@ interface PortalDatabase {
   insightsPosts: StoredInsightPost[];
   emailDispatches: StoredEmailDispatch[];
   dailyVisitors?: Record<string, DailyVisitorDayRecord>;
+  cumulativeVisitorsBase?: number;
 }
 
 interface AuthenticatedRequest extends Request {
@@ -318,6 +321,7 @@ function ensureDataDirs(): void {
       insightsPosts: [],
       emailDispatches: [],
       dailyVisitors: {},
+      cumulativeVisitorsBase: 0,
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(emptyDb, null, 2), 'utf8');
   }
@@ -378,6 +382,11 @@ function readDb(): PortalDatabase {
         parsed.dailyVisitors && typeof parsed.dailyVisitors === 'object'
           ? parsed.dailyVisitors
           : {},
+      cumulativeVisitorsBase:
+        typeof parsed.cumulativeVisitorsBase === 'number' &&
+        Number.isFinite(parsed.cumulativeVisitorsBase)
+          ? Math.max(0, Math.floor(parsed.cumulativeVisitorsBase))
+          : 0,
     };
   } catch {
     return {
@@ -389,6 +398,7 @@ function readDb(): PortalDatabase {
       insightsPosts: [],
       emailDispatches: [],
       dailyVisitors: {},
+      cumulativeVisitorsBase: 0,
     };
   }
 }
@@ -437,6 +447,113 @@ function formatFromHeader(displayName: string | undefined, senderEmail: string):
   return `"${safeName}" <${senderEmail}>`;
 }
 
+interface SmtpCandidateConfig {
+  mode: 'published-domain' | 'dev-gmail';
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  fromEmail: string;
+  pass: string;
+}
+
+function resolveSmtpCandidates(): SmtpCandidateConfig[] {
+  const candidates: SmtpCandidateConfig[] = [];
+
+  // 1. Published/Domain SMTP (mail.vardhmanconsultancy.com) — only when domain SMTP password is provided
+  const prodPass = (process.env.PROD_SMTP_PASS || process.env.DOMAIN_SMTP_PASS || '').trim();
+  if (prodPass) {
+    const candidateHost =
+      cleanSmtpHostString(process.env.PROD_SMTP_HOST) ||
+      cleanSmtpHostString(process.env.DOMAIN_SMTP_HOST);
+    const host =
+      !candidateHost || candidateHost.includes('gmail.com')
+        ? DOMAIN_SMTP_HOST
+        : candidateHost;
+    const port = Number(process.env.PROD_SMTP_PORT || process.env.DOMAIN_SMTP_PORT) || 587;
+    const secure =
+      String(process.env.PROD_SMTP_SECURE ?? process.env.DOMAIN_SMTP_SECURE ?? 'false').toLowerCase() ===
+      'true';
+    const rawUser = (process.env.PROD_SMTP_USER || process.env.DOMAIN_SMTP_USER || '')
+      .trim()
+      .toLowerCase();
+    const user = !rawUser || rawUser.endsWith('@gmail.com') ? VCS_OFFICIAL_EMAIL : rawUser;
+    const rawFrom = (process.env.PROD_SMTP_FROM || process.env.DOMAIN_SMTP_FROM || '')
+      .trim()
+      .toLowerCase();
+    const fromEmail =
+      !rawFrom || rawFrom.endsWith('@gmail.com') ? VCS_OFFICIAL_EMAIL : rawFrom;
+
+    candidates.push({
+      mode: 'published-domain',
+      host,
+      port,
+      secure,
+      user,
+      fromEmail,
+      pass: prodPass,
+    });
+    if (port !== 465) {
+      candidates.push({
+        mode: 'published-domain',
+        host,
+        port: 465,
+        secure: true,
+        user,
+        fromEmail,
+        pass: prodPass,
+      });
+    }
+  }
+
+  // 2. Gmail SMTP (smtp.gmail.com) — used in Dev/Preview OR as automatic fallback when domain SMTP fails/is unset
+  const gmailPass = (process.env.SMTP_PASS || process.env.GOOGLE_APP_PASSWORD || '')
+    .replace(/\s+/g, '')
+    .trim();
+  if (gmailPass) {
+    const candidateHost = cleanSmtpHostString(process.env.SMTP_HOST);
+    const host =
+      !candidateHost || candidateHost.includes('vardhmanconsultancy.com')
+        ? 'smtp.gmail.com'
+        : candidateHost;
+    const port = Number(process.env.SMTP_PORT) || 587;
+    const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
+    const rawUser = (process.env.SMTP_USER || '').trim().toLowerCase();
+    const user = !rawUser || rawUser === VCS_OFFICIAL_EMAIL ? GMAIL_SMTP_SENDER : rawUser;
+    const rawFrom = (process.env.SMTP_FROM || '').trim().toLowerCase();
+    const fromEmail = !rawFrom || rawFrom === VCS_OFFICIAL_EMAIL ? user : rawFrom;
+
+    const gmailCandidate: SmtpCandidateConfig = {
+      mode: 'dev-gmail',
+      host,
+      port,
+      secure,
+      user,
+      fromEmail,
+      pass: gmailPass,
+    };
+    const gmailSslFallback: SmtpCandidateConfig = {
+      mode: 'dev-gmail',
+      host,
+      port: 465,
+      secure: true,
+      user,
+      fromEmail,
+      pass: gmailPass,
+    };
+
+    if (isPublishedEnvironment()) {
+      candidates.push(gmailCandidate);
+      if (port !== 465) candidates.push(gmailSslFallback);
+    } else {
+      candidates.unshift(gmailCandidate);
+      if (port !== 465) candidates.splice(1, 0, gmailSslFallback);
+    }
+  }
+
+  return candidates;
+}
+
 function resolveActiveSmtpConfig(): {
   mode: 'published-domain' | 'dev-gmail';
   host: string;
@@ -446,90 +563,19 @@ function resolveActiveSmtpConfig(): {
   fromEmail: string;
   pass: string;
 } {
-  if (isPublishedEnvironment()) {
-    const candidateHost =
-      cleanSmtpHostString(process.env.PROD_SMTP_HOST) ||
-      cleanSmtpHostString(process.env.DOMAIN_SMTP_HOST) ||
-      cleanSmtpHostString(process.env.SMTP_HOST);
-    const host =
-      !candidateHost || candidateHost.includes('gmail.com')
-        ? DOMAIN_SMTP_HOST
-        : candidateHost;
-    const port =
-      Number(
-        process.env.PROD_SMTP_PORT || process.env.DOMAIN_SMTP_PORT || process.env.SMTP_PORT
-      ) || 587;
-    const secure =
-      String(
-        process.env.PROD_SMTP_SECURE ??
-          process.env.DOMAIN_SMTP_SECURE ??
-          process.env.SMTP_SECURE ??
-          'false'
-      ).toLowerCase() === 'true';
-
-    const rawUser = (
-      process.env.PROD_SMTP_USER ||
-      process.env.DOMAIN_SMTP_USER ||
-      process.env.SMTP_USER ||
-      ''
-    )
-      .trim()
-      .toLowerCase();
-    const user = !rawUser || rawUser.endsWith('@gmail.com') ? VCS_OFFICIAL_EMAIL : rawUser;
-
-    const rawFrom = (
-      process.env.PROD_SMTP_FROM ||
-      process.env.DOMAIN_SMTP_FROM ||
-      process.env.SMTP_FROM ||
-      ''
-    )
-      .trim()
-      .toLowerCase();
-    const fromEmail =
-      !rawFrom || rawFrom.endsWith('@gmail.com') ? VCS_OFFICIAL_EMAIL : rawFrom;
-
-    const pass = (
-      process.env.PROD_SMTP_PASS ||
-      process.env.DOMAIN_SMTP_PASS ||
-      process.env.SMTP_PASS ||
-      ''
-    ).trim();
-
-    return {
-      mode: 'published-domain',
-      host,
-      port,
-      secure,
-      user,
-      fromEmail,
-      pass,
-    };
+  const candidates = resolveSmtpCandidates();
+  if (candidates.length > 0) {
+    return candidates[0];
   }
-
-  // Dev/Preview Mode -> Gmail SMTP
-  const candidateHost = cleanSmtpHostString(process.env.SMTP_HOST);
-  const host =
-    !candidateHost || candidateHost.includes('vardhmanconsultancy.com')
-      ? 'smtp.gmail.com'
-      : candidateHost;
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-  const rawUser = (process.env.SMTP_USER || '').trim().toLowerCase();
-  const user = !rawUser || rawUser === VCS_OFFICIAL_EMAIL ? GMAIL_SMTP_SENDER : rawUser;
-  const rawFrom = (process.env.SMTP_FROM || '').trim().toLowerCase();
-  const fromEmail = !rawFrom || rawFrom === VCS_OFFICIAL_EMAIL ? user : rawFrom;
-  const pass = (process.env.SMTP_PASS || process.env.GOOGLE_APP_PASSWORD || '')
-    .replace(/\s+/g, '')
-    .trim();
-
+  const published = isPublishedEnvironment();
   return {
-    mode: 'dev-gmail',
-    host,
-    port,
-    secure,
-    user,
-    fromEmail,
-    pass,
+    mode: published ? 'published-domain' : 'dev-gmail',
+    host: published ? DOMAIN_SMTP_HOST : 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    user: published ? VCS_OFFICIAL_EMAIL : GMAIL_SMTP_SENDER,
+    fromEmail: published ? VCS_OFFICIAL_EMAIL : GMAIL_SMTP_SENDER,
+    pass: '',
   };
 }
 
@@ -552,6 +598,41 @@ function resolveResumeAttachment(
   return [];
 }
 
+async function attemptSmtpSend(params: {
+  smtp: SmtpCandidateConfig;
+  fromDisplayName?: string;
+  to: string;
+  cc?: string | null;
+  replyTo?: string | null;
+  subject: string;
+  text: string;
+  attachments?: Array<{ filename: string; path: string }>;
+}): Promise<void> {
+  const formattedFrom = formatFromHeader(params.fromDisplayName, params.smtp.fromEmail);
+  const transporter = nodemailer.createTransport({
+    host: params.smtp.host,
+    port: params.smtp.port,
+    secure: params.smtp.secure,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
+    auth: {
+      user: params.smtp.user,
+      pass: params.smtp.pass,
+    },
+  });
+  await transporter.sendMail({
+    from: formattedFrom,
+    sender: params.smtp.fromEmail,
+    to: params.to,
+    cc: params.cc || undefined,
+    replyTo: params.replyTo || undefined,
+    subject: params.subject,
+    text: params.text,
+    attachments: params.attachments,
+  });
+}
+
 async function dispatchPortalEmail(params: {
   db: PortalDatabase;
   type: StoredEmailDispatch['type'];
@@ -565,36 +646,55 @@ async function dispatchPortalEmail(params: {
   attachments?: Array<{ filename: string; path: string }>;
   relatedEntityId: string;
 }): Promise<StoredEmailDispatch> {
-  const smtp = resolveActiveSmtpConfig();
-  const ccAddress = params.cc === undefined ? VCS_OFFICIAL_EMAIL : params.cc;
-  const formattedFrom = formatFromHeader(params.fromDisplayName, smtp.fromEmail);
-  const replyToOnly = params.replyTo ? params.replyTo.trim() : null;
+  const candidates = resolveSmtpCandidates();
+  const primaryDisplay = resolveActiveSmtpConfig();
 
+  // Ensure both cvforvcs@gmail.com and info@vardhmanconsultancy.com receive admin/portal forwards without duplicates
+  const normalizedTo = params.to.trim().toLowerCase();
+  const rawCc = params.cc === undefined ? VCS_OFFICIAL_EMAIL : params.cc;
+  const ccList = String(rawCc || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => Boolean(e) && e !== normalizedTo);
+  if (normalizedTo === DESIGNATED_ADMIN_EMAIL && !ccList.includes(VCS_OFFICIAL_EMAIL)) {
+    ccList.push(VCS_OFFICIAL_EMAIL);
+  }
+  const ccAddress = ccList.length > 0 ? ccList.join(', ') : null;
+
+  const replyToOnly = params.replyTo ? params.replyTo.trim() : null;
+  let formattedFrom = formatFromHeader(params.fromDisplayName, primaryDisplay.fromEmail);
   let deliveredVia: 'smtp' | 'queued' = 'queued';
-  if (smtp.host && smtp.user && smtp.pass) {
+  let environmentMode: 'published-domain' | 'dev-gmail' = primaryDisplay.mode;
+  let smtpHostUsed: string | null = null;
+  let lastError: string | null =
+    candidates.length === 0
+      ? 'SMTP password not configured (set PROD_SMTP_PASS or SMTP_PASS in server Secrets).'
+      : null;
+
+  for (const smtp of candidates) {
     try {
-      const transporter = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure: smtp.secure,
-        auth: {
-          user: smtp.user,
-          pass: smtp.pass,
-        },
-      });
-      await transporter.sendMail({
-        from: formattedFrom,
-        sender: smtp.fromEmail,
+      await attemptSmtpSend({
+        smtp,
+        fromDisplayName: params.fromDisplayName,
         to: params.to,
-        cc: ccAddress || undefined,
-        replyTo: replyToOnly || undefined,
+        cc: ccAddress,
+        replyTo: replyToOnly,
         subject: params.subject,
         text: params.text,
         attachments: params.attachments,
       });
       deliveredVia = 'smtp';
+      environmentMode = smtp.mode;
+      smtpHostUsed = `${smtp.host}:${smtp.port}`;
+      formattedFrom = formatFromHeader(params.fromDisplayName, smtp.fromEmail);
+      lastError = null;
+      break;
     } catch (err) {
-      console.warn('SMTP dispatch fallback to queued:', err instanceof Error ? err.message : err);
+      lastError = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `SMTP dispatch attempt failed (${smtp.host}:${smtp.port}):`,
+        lastError
+      );
     }
   }
 
@@ -604,11 +704,13 @@ async function dispatchPortalEmail(params: {
     from: formattedFrom,
     replyTo: replyToOnly,
     to: params.to,
-    cc: ccAddress || null,
+    cc: ccAddress,
     subject: params.subject,
     text: params.text,
     deliveredVia,
-    environmentMode: smtp.mode,
+    environmentMode,
+    smtpHostUsed,
+    lastError,
     relatedEntityId: params.relatedEntityId,
     createdAt: new Date().toISOString(),
   };
@@ -1226,6 +1328,27 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '16mb' }));
 
+  const ALLOWED_CORS_ORIGINS = new Set([
+    'https://www.jobsnia.com',
+    'https://jobsnia.com',
+    'https://www.vardhmanconsultancy.com',
+    'https://vardhmanconsultancy.com',
+  ]);
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = String(req.headers.origin || '').trim();
+    if (origin && ALLOWED_CORS_ORIGINS.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Visitor-Id');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   // Check if Account Already Exists in Unified Users Table (for Register Pre-Check & Unlock Account)
   app.post('/api/auth/account-status', (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
@@ -1708,6 +1831,53 @@ async function startServer() {
           text: autoReplyBody,
           relatedEntityId: initialJob.id,
         });
+      } else if (effectiveRole === 'employer') {
+        const employerRegBody = [
+          'NEW EMPLOYER REGISTRATION - JOBSNIA.COM / VARDHMAN CONSULTANCY SERVICES',
+          '',
+          '=== EMPLOYER DETAILS ===',
+          `Employer ID: ${newCandidate.id}`,
+          `Company Name: ${companyName}`,
+          `Full Address: ${fullAddress || city || 'Not provided'}`,
+          `Official Email ID: ${email}`,
+          `Contact Person Name: ${name}`,
+          `Mobile Number: ${mobile10 || 'Not provided'}`,
+          `City: ${city || 'India'}`,
+          `Registered At: ${newCandidate.createdAt}`,
+        ].join('\n');
+
+        await dispatchPortalEmail({
+          db,
+          type: 'employer-requirement',
+          fromDisplayName: `${name} - ${companyName}`,
+          to: DESIGNATED_ADMIN_EMAIL,
+          cc: ADMIN_NOTIFICATION_CC,
+          replyTo: email,
+          subject: `New Employer Registered: ${companyName} (${name})`,
+          text: employerRegBody,
+          relatedEntityId: newCandidate.id,
+        });
+
+        await dispatchPortalEmail({
+          db,
+          type: 'employer-autoreply',
+          fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+          to: email,
+          cc: ADMIN_NOTIFICATION_CC,
+          replyTo: VCS_OFFICIAL_EMAIL,
+          subject: `Welcome Employer Partner — ${companyName} | JobsNia.com`,
+          text: [
+            `Dear ${name},`,
+            '',
+            'Thank you for registering your Employer account on JobsNia.com (A Venture of Vardhman Consultancy Services).',
+            'You can now submit confidential hiring requirements / JDs anytime from your Employer Dashboard.',
+            '',
+            'Warm Regards,',
+            'JobsNia.com — Vardhman Consultancy Services',
+            'Email: info@vardhmanconsultancy.com',
+          ].join('\n'),
+          relatedEntityId: newCandidate.id,
+        });
       }
 
       if (effectiveRole === 'candidate') {
@@ -2013,6 +2183,34 @@ async function startServer() {
         draftCandidate.profileCompleteness = calculateProfileCompleteness(draftCandidate);
         db.candidates.push(draftCandidate);
         idx = db.candidates.length - 1;
+
+        if (assignedRole !== 'admin') {
+          const googleRegBody = [
+            `NEW ${assignedRole.toUpperCase()} REGISTRATION (GOOGLE SIGN-IN) - JOBSNIA.COM`,
+            '',
+            `User ID: ${draftCandidate.id}`,
+            `Role: ${assignedRole}`,
+            `Full Name: ${draftCandidate.name}`,
+            `Email: ${draftCandidate.email}`,
+            draftCandidate.companyName ? `Company Name: ${draftCandidate.companyName}` : '',
+            `Registered At: ${draftCandidate.createdAt}`,
+          ]
+            .filter(Boolean)
+            .join('\n');
+
+          await dispatchPortalEmail({
+            db,
+            type: assignedRole === 'employer' ? 'employer-requirement' : 'candidate-application',
+            fromDisplayName: draftCandidate.name,
+            to: DESIGNATED_ADMIN_EMAIL,
+            cc: ADMIN_NOTIFICATION_CC,
+            replyTo: draftCandidate.email,
+            subject: `New ${assignedRole === 'employer' ? 'Employer' : 'Candidate'} Registration (Google): ${draftCandidate.name}`,
+            text: googleRegBody,
+            relatedEntityId: draftCandidate.id,
+          });
+        }
+
         writeDb(db);
       } else if (isDesignatedAdmin && db.candidates[idx].role !== 'admin') {
         db.candidates[idx] = {
@@ -2042,7 +2240,7 @@ async function startServer() {
   });
 
   // Upload / Replace Profile Resume PDF/DOC/DOCX
-  app.post('/api/candidate/resume', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/candidate/resume', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       if (!req.candidate) {
         res.status(401).json({ error: 'Authentication required.' });
@@ -2067,6 +2265,32 @@ async function startServer() {
         resumeFileName,
         resumeUpdatedAt: now,
       };
+
+      const updatedUser = db.candidates[idx];
+      await dispatchPortalEmail({
+        db,
+        type: 'candidate-application',
+        fromDisplayName: updatedUser.name,
+        to: DESIGNATED_ADMIN_EMAIL,
+        cc: ADMIN_NOTIFICATION_CC,
+        replyTo: updatedUser.email,
+        subject: `Candidate Resume Uploaded / Updated: ${updatedUser.name} (${updatedUser.city || 'India'})`,
+        text: [
+          'CANDIDATE PROFILE RESUME UPLOADED / UPDATED - JOBSNIA.COM',
+          '',
+          `Candidate ID: ${updatedUser.id}`,
+          `Full Name: ${updatedUser.name}`,
+          `Email: ${updatedUser.email}`,
+          `Mobile: ${updatedUser.phone || 'Not provided'}`,
+          `City: ${updatedUser.city || 'India'}`,
+          `Experience: ${updatedUser.experience || 'Not specified'}`,
+          `Resume File: ${resumeFileName}`,
+          `Updated At: ${now}`,
+        ].join('\n'),
+        attachments: resolveResumeAttachment(resumeId, resumeFileName),
+        relatedEntityId: updatedUser.id,
+      });
+
       writeDb(db);
 
       res.json({ candidate: toPublicCandidate(db.candidates[idx]) });
@@ -2378,6 +2602,127 @@ async function startServer() {
       a.appliedAt < b.appliedAt ? 1 : -1
     );
     res.json({ applications: allApps });
+  });
+
+  // Admin: Email Forwarding Diagnostics, Test Email & Retry Queued Dispatches
+  app.get('/api/admin/email-status', requireAuth, requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+    const db = readDb();
+    const candidates = resolveSmtpCandidates();
+    const dispatches = Array.isArray(db.emailDispatches) ? db.emailDispatches : [];
+    const sentCount = dispatches.filter((d) => d.deliveredVia === 'smtp').length;
+    const queuedCount = dispatches.filter((d) => d.deliveredVia !== 'smtp').length;
+    const recentDispatches = [...dispatches]
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .slice(0, 15)
+      .map((d) => ({
+        id: d.id,
+        type: d.type,
+        to: d.to,
+        cc: d.cc,
+        subject: d.subject,
+        deliveredVia: d.deliveredVia,
+        smtpHostUsed: d.smtpHostUsed || null,
+        lastError: d.lastError || null,
+        createdAt: d.createdAt,
+      }));
+
+    res.json({
+      smtpConfigured: candidates.length > 0,
+      primaryMode: candidates[0]?.mode || (isPublishedEnvironment() ? 'published-domain' : 'dev-gmail'),
+      configuredTransports: candidates.map((c) => ({
+        mode: c.mode,
+        host: c.host,
+        port: c.port,
+        user: c.user,
+      })),
+      forwardRecipients: [DESIGNATED_ADMIN_EMAIL, VCS_OFFICIAL_EMAIL],
+      totalDispatches: dispatches.length,
+      sentCount,
+      queuedCount,
+      recentDispatches,
+    });
+  });
+
+  app.post('/api/admin/email-test', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res: Response) => {
+    const db = readDb();
+    const dispatch = await dispatchPortalEmail({
+      db,
+      type: 'contact-inquiry',
+      fromDisplayName: 'JobsNia.com Portal Verification',
+      to: DESIGNATED_ADMIN_EMAIL,
+      cc: ADMIN_NOTIFICATION_CC,
+      replyTo: VCS_OFFICIAL_EMAIL,
+      subject: `JobsNia.com SMTP Verification Test (${new Date().toISOString()})`,
+      text: [
+        'This is an automated verification email from JobsNia.com — Vardhman Consultancy Services.',
+        '',
+        `Primary Admin Recipient: ${DESIGNATED_ADMIN_EMAIL}`,
+        `Official CC Recipient: ${VCS_OFFICIAL_EMAIL}`,
+        `Server Time: ${new Date().toISOString()}`,
+      ].join('\n'),
+      relatedEntityId: `smtp_test_${Date.now()}`,
+    });
+    writeDb(db);
+    res.json({
+      ok: dispatch.deliveredVia === 'smtp',
+      deliveredVia: dispatch.deliveredVia,
+      smtpHostUsed: dispatch.smtpHostUsed || null,
+      error: dispatch.lastError || null,
+      dispatch,
+    });
+  });
+
+  app.post('/api/admin/email-retry-queued', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res: Response) => {
+    const candidates = resolveSmtpCandidates();
+    if (candidates.length === 0) {
+      res.status(400).json({
+        error: 'SMTP password is not configured on the server. Set SMTP_PASS or PROD_SMTP_PASS in Secrets.',
+      });
+      return;
+    }
+
+    const db = readDb();
+    const dispatches = Array.isArray(db.emailDispatches) ? db.emailDispatches : [];
+    const queuedItems = dispatches.filter((d) => d.deliveredVia !== 'smtp').slice(-25);
+    let retriedSent = 0;
+    let stillFailed = 0;
+
+    for (const item of queuedItems) {
+      let sent = false;
+      let errMsg: string | null = null;
+      for (const smtp of candidates) {
+        try {
+          await attemptSmtpSend({
+            smtp,
+            fromDisplayName: 'JobsNia.com — Vardhman Consultancy Services',
+            to: item.to,
+            cc: item.cc,
+            replyTo: item.replyTo,
+            subject: item.subject,
+            text: item.text,
+          });
+          item.deliveredVia = 'smtp';
+          item.smtpHostUsed = `${smtp.host}:${smtp.port}`;
+          item.lastError = null;
+          sent = true;
+          retriedSent += 1;
+          break;
+        } catch (err) {
+          errMsg = err instanceof Error ? err.message : String(err);
+        }
+      }
+      if (!sent) {
+        item.lastError = errMsg;
+        stillFailed += 1;
+      }
+    }
+
+    writeDb(db);
+    res.json({
+      attempted: queuedItems.length,
+      retriedSent,
+      stillFailed,
+    });
   });
 
   // Portal Public Application Submission (No login required; saves PDF + form data to Resume Godam & notifies Admin)
@@ -5222,12 +5567,26 @@ async function startServer() {
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24);
   }
 
+  function computeCumulativeVisitors(db: PortalDatabase): number {
+    const base =
+      typeof db.cumulativeVisitorsBase === 'number' &&
+      Number.isFinite(db.cumulativeVisitorsBase)
+        ? Math.max(0, Math.floor(db.cumulativeVisitorsBase))
+        : 0;
+    const daysSum = Object.values(db.dailyVisitors || {}).reduce((acc, rec) => {
+      const c = rec && typeof rec.count === 'number' && Number.isFinite(rec.count) ? rec.count : 0;
+      return acc + Math.max(0, Math.floor(c));
+    }, 0);
+    return base + daysSum;
+  }
+
   app.get('/api/public/daily-visitors', (_req: Request, res: Response) => {
     const db = readDb();
     const dateKey = getIstDateKey();
     const dayEntry = db.dailyVisitors?.[dateKey];
     const count = dayEntry && typeof dayEntry.count === 'number' ? dayEntry.count : 0;
-    res.json({ date: dateKey, dailyVisitors: count });
+    const totalVisitors = computeCumulativeVisitors(db);
+    res.json({ date: dateKey, dailyVisitors: count, totalVisitors });
   });
 
   app.post('/api/public/daily-visitors/hit', (req: Request, res: Response) => {
@@ -5254,12 +5613,15 @@ async function startServer() {
         visitorHashes: hashes.slice(-5000),
       };
 
-      // Prune entries older than 30 days to keep portal-db.json compact
+      // Roll old counts into cumulativeVisitorsBase before pruning >30 day keys
       const keys = Object.keys(db.dailyVisitors).sort();
       if (keys.length > 30) {
+        let rolled = Number(db.cumulativeVisitorsBase) || 0;
         for (const oldKey of keys.slice(0, keys.length - 30)) {
+          rolled += Math.max(0, Math.floor(Number(db.dailyVisitors[oldKey]?.count) || 0));
           delete db.dailyVisitors[oldKey];
         }
+        db.cumulativeVisitorsBase = rolled;
       }
       writeDb(db);
     }
@@ -5267,6 +5629,7 @@ async function startServer() {
     res.json({
       date: dateKey,
       dailyVisitors: db.dailyVisitors[dateKey]?.count || 0,
+      totalVisitors: computeCumulativeVisitors(db),
     });
   });
 
@@ -5367,6 +5730,68 @@ async function startServer() {
     } catch {
       res.status(500).json({ error: 'Unable to translate right now.' });
     }
+  });
+
+  // =========================================================================
+  // SEO: ROBOTS.TXT & DYNAMIC SITEMAP.XML (WWW.JOBSNIA.COM)
+  // =========================================================================
+  app.get('/robots.txt', (_req: Request, res: Response) => {
+    res.type('text/plain').send(
+      [
+        'User-agent: *',
+        'Allow: /',
+        'Disallow: /admin-dashboard',
+        'Disallow: /dashboard',
+        'Disallow: /employer-dashboard',
+        'Disallow: /api/',
+        '',
+        'Sitemap: https://www.jobsnia.com/sitemap.xml',
+      ].join('\n')
+    );
+  });
+
+  app.get('/sitemap.xml', (_req: Request, res: Response) => {
+    const baseOrigin = 'https://www.jobsnia.com';
+    const staticPages = [
+      { path: '/', changefreq: 'daily', priority: '1.0' },
+      { path: '/search-jobs', changefreq: 'hourly', priority: '0.95' },
+      { path: '/about-us', changefreq: 'monthly', priority: '0.8' },
+      { path: '/build-resume', changefreq: 'monthly', priority: '0.85' },
+      { path: '/interview-tips', changefreq: 'weekly', priority: '0.8' },
+      { path: '/vcs-insights', changefreq: 'daily', priority: '0.85' },
+      { path: '/post-job', changefreq: 'monthly', priority: '0.8' },
+      { path: '/contact-us', changefreq: 'monthly', priority: '0.75' },
+      { path: '/job-seeker-terms', changefreq: 'yearly', priority: '0.5' },
+    ];
+
+    const db = readDb();
+    const approvedJobs = (db.jobs || [])
+      .filter((job) => job && job.status === 'Approved' && job.id)
+      .slice(0, 500);
+
+    const escapeXml = (str: string) =>
+      str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+
+    const urlEntries = [
+      ...staticPages.map(
+        (page) =>
+          `  <url>\n    <loc>${escapeXml(`${baseOrigin}${page.path}`)}</loc>\n    <changefreq>${page.changefreq}</changefreq>\n    <priority>${page.priority}</priority>\n  </url>`
+      ),
+      ...approvedJobs.map((job) => {
+        const lastmodDate = job.createdAt && !Number.isNaN(Date.parse(job.createdAt))
+          ? new Date(job.createdAt).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        return `  <url>\n    <loc>${escapeXml(`${baseOrigin}/job/${encodeURIComponent(job.id)}`)}</loc>\n    <lastmod>${lastmodDate}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>`;
+      }),
+    ];
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urlEntries.join('\n')}\n</urlset>`;
+    res.type('application/xml').send(xml);
   });
 
   if (process.env.NODE_ENV !== 'production') {

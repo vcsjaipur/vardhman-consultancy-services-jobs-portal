@@ -18,7 +18,8 @@
    - Every `create` timestamps `createdAt == request.time` (or `appliedAt == request.time`), every `update` enforces `updatedAt == request.time`, and every string/array enforces explicit `.size()` bounds and `keys().hasAll(...)` + `keys().hasOnly(...)` checks.
 6. **Atomic Daily Visitor Counter Integrity**:
    - `/daily_visitors/{dateKey}` enforces `dateKey` pattern `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`, `count == 1` on `create`, `count == existing().count + 1` on `update`, `updatedAt == request.time`, and atomic `existsAfter`/`getAfter` pairing with a brand-new `/daily_visitor_hits/{hitId}` document.
-   - `/daily_visitor_hits/{hitId}` enforces deterministic `hitId == date + '_' + visitorId`, `createdAt == request.time`, atomic `existsAfter`/`getAfter` pairing with `/daily_visitors/{dateKey}`, `allow list: if false`, and `allow update, delete: if false`.
+   - `/site_stats/visitors` stores the cumulative website visitor counter (`count == existing().count + 1` on `update`, never resets across days) plus `todayCount` for the active IST date, paired atomically with a brand-new `/daily_visitor_hits/{hitId}` document.
+   - `/daily_visitor_hits/{hitId}` enforces deterministic `hitId == date + '_' + visitorId`, `createdAt == request.time`, atomic `existsAfter`/`getAfter` pairing with `/site_stats/visitors` or `/daily_visitors/{dateKey}`, `allow list: if false`, and `allow update, delete: if false`.
 
 ## 2. "Dirty Dozen" Attack Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Job Creation**: Write to `/jobs/job_1` with `request.auth == null`.
@@ -35,3 +36,4 @@
 12. **Client Timestamp Forgery**: Candidate creates `/applications/app_3` with a forged `appliedAt` not matching `request.time`.
 13. **Resume Godam Submission Without Terms Acceptance**: Candidate creates `/resume_godam/rg_1` with `termsAccepted: false`.
 14. **Daily Visitor Counter Inflation**: Unauthenticated client updates `/daily_visitors/2026-11-25` jumping `count` by `+500` or without an atomic `/daily_visitor_hits/{hitId}` write.
+15. **Cumulative Site Stats Counter Reset/Inflation**: Unauthenticated client updates `/site_stats/visitors` resetting `count` to `1` or inflating `count` without an atomic `/daily_visitor_hits/{hitId}` write.

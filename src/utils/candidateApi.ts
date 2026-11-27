@@ -1,5 +1,6 @@
 import {
   AcademicEntry,
+  AdminEmailStatusResponse,
   AdminJobAlertsOverview,
   AiCareerCopilotResponse,
   AiCoverLetterResponse,
@@ -211,6 +212,17 @@ export async function readPdfFileAsBase64(
   return readResumeFileAsBase64(file);
 }
 
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '')
+  .trim()
+  .replace(/\/+$/, '');
+
+export function resolveApiUrl(url: string): string {
+  if (url.startsWith('/api') && API_BASE_URL) {
+    return `${API_BASE_URL}${url}`;
+  }
+  return url;
+}
+
 async function apiRequest<T>(
   url: string,
   options: RequestInit = {},
@@ -228,7 +240,15 @@ async function apiRequest<T>(
     }
   }
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(resolveApiUrl(url), { ...options, headers });
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (url.startsWith('/api') && !contentType.includes('application/json')) {
+    throw new ApiRequestError(
+      'Backend email forwarding server is unavailable on this static host.',
+      503,
+      'BACKEND_UNAVAILABLE'
+    );
+  }
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     const message =
@@ -729,7 +749,7 @@ export async function fetchResumeBlobUrl(resumeId: string): Promise<string> {
   if (!token) {
     throw new Error('Please log in as Admin to view this resume.');
   }
-  const response = await fetch(`/api/resumes/${encodeURIComponent(resumeId)}`, {
+  const response = await fetch(resolveApiUrl(`/api/resumes/${encodeURIComponent(resumeId)}`), {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -753,7 +773,7 @@ export async function downloadResumePdf(
   if (!token) {
     throw new Error('Please log in to download your resume.');
   }
-  const response = await fetch(`/api/resumes/${encodeURIComponent(resumeId)}`, {
+  const response = await fetch(resolveApiUrl(`/api/resumes/${encodeURIComponent(resumeId)}`), {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -1574,4 +1594,24 @@ export async function runAutoApplyMode(
   });
 }
 
+export async function fetchAdminEmailStatus(): Promise<AdminEmailStatusResponse> {
+  return apiRequest<AdminEmailStatusResponse>('/api/admin/email-status');
+}
 
+export async function sendAdminTestEmail(): Promise<{
+  ok: boolean;
+  deliveredVia: 'smtp' | 'queued';
+  smtpHostUsed?: string | null;
+  error?: string | null;
+  dispatch: EmailDispatchSummary;
+}> {
+  return apiRequest('/api/admin/email-test', { method: 'POST' });
+}
+
+export async function retryQueuedAdminEmails(): Promise<{
+  attempted: number;
+  retriedSent: number;
+  stillFailed: number;
+}> {
+  return apiRequest('/api/admin/email-retry-queued', { method: 'POST' });
+}

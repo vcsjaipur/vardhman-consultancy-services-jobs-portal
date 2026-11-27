@@ -268,7 +268,8 @@ export interface EmailDispatchSummary {
     | 'job-alert'
     | 'auto-apply-digest'
     | 'interview-reminder'
-    | 'skill-test-report';
+    | 'skill-test-report'
+    | 'auth-otp';
   from: string;
   replyTo?: string | null;
   to: string;
@@ -276,7 +277,35 @@ export interface EmailDispatchSummary {
   subject: string;
   deliveredVia: 'smtp' | 'queued';
   environmentMode?: 'published-domain' | 'dev-gmail';
+  smtpHostUsed?: string | null;
+  lastError?: string | null;
   createdAt: string;
+}
+
+export interface AdminEmailStatusResponse {
+  smtpConfigured: boolean;
+  primaryMode: 'published-domain' | 'dev-gmail';
+  configuredTransports: Array<{
+    mode: 'published-domain' | 'dev-gmail';
+    host: string;
+    port: number;
+    user: string;
+  }>;
+  forwardRecipients: string[];
+  totalDispatches: number;
+  sentCount: number;
+  queuedCount: number;
+  recentDispatches: Array<{
+    id: string;
+    type: string;
+    to: string;
+    cc?: string | null;
+    subject: string;
+    deliveredVia: 'smtp' | 'queued';
+    smtpHostUsed?: string | null;
+    lastError?: string | null;
+    createdAt: string;
+  }>;
 }
 
 export interface SearchSuggestionItem {

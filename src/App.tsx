@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { auth, ensureVerifiedGoogleUser } from './firebase';
+import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import { auth, ensureVerifiedGoogleUser, googleProvider } from './firebase';
 import { AboutUsPage } from './components/AboutUsPage';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
 import { ApplyJobModal } from './components/ApplyJobModal';
@@ -57,6 +57,7 @@ import {
   loginWithGoogleToken,
   saveCandidateSearchHistory,
   SaveInsightPostPayload,
+  setCachedCandidateProfile,
   setStoredToken,
   toggleInsightLike,
   updateAdminJobStatus,
@@ -65,27 +66,36 @@ import {
 import {
   fetchGlobalAutoApproveSetting,
   fetchPublicJobById,
+  getCachedVisitorStats,
   setGlobalAutoApproveSetting,
+  SiteVisitorStats,
   subscribeAdminApplicationsFromFirestore,
   subscribeAdminJobsFromFirestore,
   subscribeAdminResumeGodamFromFirestore,
+  subscribeAdminUsersFromFirestore,
   subscribeApprovedPublicJobs,
   subscribeCandidateApplicationsFromFirestore,
   subscribeCandidateResumeGodamFromFirestore,
+  subscribeCumulativeVisitorsFromFirestore,
   subscribeEmployerApplicationsFromFirestore,
   subscribeEmployerJobsFromFirestore,
   syncApprovedJobsToPublicInFirestore,
   syncUserProfileToFirestore,
   updateJobApprovalInFirestore,
 } from './utils/firestorePortal';
+import { updateSeoForRoute } from './utils/seoManager';
 import {
   fetchSharedActiveJobs,
+  fetchSharedCandidatesAsApplications,
   fetchSharedCompanyRequirements,
   fetchSharedJobById,
   fetchSharedResumeGodamEntries,
+  SharedClientQueryRecord,
   SharedCompanyRequirementRecord,
   startSharedAutoSyncDaemon,
   subscribeSharedActiveJobs,
+  subscribeSharedCandidatesAsApplications,
+  subscribeSharedClientQueries,
   subscribeSharedCompanyRequirements,
   subscribeSharedResumeGodamEntries,
 } from './utils/sharedPortalFirestore';
@@ -122,9 +132,12 @@ function parseRouteFromHash(): {
   page: PortalPageView;
   jobId: string | null;
   portalRole?: UserRole;
+  searchQuery?: string;
 } {
   const rawHash = window.location.hash;
   const clean = rawHash.replace(/^#\/?/, '').toLowerCase();
+  const searchParams = new URLSearchParams(window.location.search);
+  const queryParam = (searchParams.get('q') || '').trim();
 
   if (clean === 'vcs-admin-only-2026') {
     return { page: 'login', jobId: null, portalRole: 'admin' };
@@ -139,7 +152,7 @@ function parseRouteFromHash(): {
     return { page: 'register', jobId: null, portalRole: 'employer' };
   }
   if (clean === 'search-jobs') {
-    return { page: 'search-jobs', jobId: null };
+    return { page: 'search-jobs', jobId: null, searchQuery: queryParam || undefined };
   }
   if (clean === 'register') {
     return { page: 'register', jobId: null, portalRole: 'candidate' };
@@ -184,6 +197,69 @@ function parseRouteFromHash(): {
     const id = decodeURIComponent(rawHash.slice('#job/'.length));
     return { page: 'job-details', jobId: id || null };
   }
+
+  // Also support clean SEO URLs (e.g. https://www.jobsnia.com/search-jobs or /job/123)
+  const cleanPath = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+  if (cleanPath === 'search-jobs' || cleanPath === 'jobs') {
+    return { page: 'search-jobs', jobId: null, searchQuery: queryParam || undefined };
+  }
+  if (cleanPath === 'about-us' || cleanPath === 'about') {
+    return { page: 'about-us', jobId: null };
+  }
+  if (cleanPath === 'contact-us' || cleanPath === 'contact') {
+    return { page: 'contact-us', jobId: null };
+  }
+  if (cleanPath === 'build-resume') {
+    return { page: 'build-resume', jobId: null };
+  }
+  if (cleanPath === 'interview-tips') {
+    return { page: 'interview-tips', jobId: null };
+  }
+  if (cleanPath === 'vcs-insights') {
+    return { page: 'vcs-insights', jobId: null };
+  }
+  if (cleanPath === 'post-job') {
+    return { page: 'post-job', jobId: null };
+  }
+  if (cleanPath === 'job-seeker-terms') {
+    return { page: 'job-seeker-terms', jobId: null };
+  }
+  if (cleanPath === 'register') {
+    return { page: 'register', jobId: null, portalRole: 'candidate' };
+  }
+  if (cleanPath === 'login') {
+    return { page: 'login', jobId: null, portalRole: 'candidate' };
+  }
+  if (cleanPath === 'employer-login') {
+    return { page: 'login', jobId: null, portalRole: 'employer' };
+  }
+  if (cleanPath === 'employer-register') {
+    return { page: 'register', jobId: null, portalRole: 'employer' };
+  }
+  if (cleanPath === 'vcs-admin-only-2026') {
+    return { page: 'login', jobId: null, portalRole: 'admin' };
+  }
+  if (cleanPath === 'vcs-admin-register-2026') {
+    return { page: 'register', jobId: null, portalRole: 'admin' };
+  }
+  if (cleanPath === 'dashboard') {
+    return { page: 'dashboard', jobId: null };
+  }
+  if (cleanPath === 'employer-dashboard') {
+    return { page: 'employer-dashboard', jobId: null };
+  }
+  if (cleanPath === 'admin-dashboard' || cleanPath === 'admin') {
+    return { page: 'admin-dashboard', jobId: null };
+  }
+  if (window.location.pathname.startsWith('/job/')) {
+    const rawId = window.location.pathname.slice('/job/'.length).replace(/\/+$/, '');
+    const id = decodeURIComponent(rawId);
+    return { page: 'job-details', jobId: id || null };
+  }
+  if (queryParam) {
+    return { page: 'search-jobs', jobId: null, searchQuery: queryParam };
+  }
+
   return { page: 'home', jobId: null };
 }
 
@@ -273,6 +349,11 @@ export default function App() {
       []
     )
   );
+  const [registeredUsers, setRegisteredUsers] = useState<CandidateProfile[]>([]);
+  const [clientQueries, setClientQueries] = useState<SharedClientQueryRecord[]>([]);
+  const [visitorStats, setVisitorStats] = useState<SiteVisitorStats | null>(() =>
+    getCachedVisitorStats()
+  );
   const [isLoadingAdminApplications, setIsLoadingAdminApplications] = useState(false);
   const [autoApproveEnabled, setAutoApproveEnabled] = useState(false);
 
@@ -281,14 +362,21 @@ export default function App() {
   );
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
 
-  const [filters, setFilters] = useState<JobSearchFilters>(INITIAL_FILTERS);
+  const [filters, setFilters] = useState<JobSearchFilters>(() => ({
+    ...INITIAL_FILTERS,
+    keyword: initialRoute.searchQuery || '',
+  }));
   const [appliedFilters, setAppliedFilters] = useState<JobSearchFilters | null>(null);
 
-  const [searchPageFilters, setSearchPageFilters] = useState<SearchPageFilters>(
-    INITIAL_SEARCH_PAGE_FILTERS
-  );
+  const [searchPageFilters, setSearchPageFilters] = useState<SearchPageFilters>(() => ({
+    ...INITIAL_SEARCH_PAGE_FILTERS,
+    keyword: initialRoute.searchQuery || '',
+  }));
   const [appliedSearchPageFilters, setAppliedSearchPageFilters] =
-    useState<SearchPageFilters>(INITIAL_SEARCH_PAGE_FILTERS);
+    useState<SearchPageFilters>(() => ({
+      ...INITIAL_SEARCH_PAGE_FILTERS,
+      keyword: initialRoute.searchQuery || '',
+    }));
 
   const [activeModal, setActiveModal] = useState<PortalModalType>(null);
   const [isJobAlertsOpen, setIsJobAlertsOpen] = useState(false);
@@ -385,14 +473,15 @@ export default function App() {
   const loadAdminJobsList = async () => {
     setIsLoadingAdminApplications(true);
     try {
-      const [serverApps, sharedApps, sharedReqs] = await Promise.all([
+      const [serverApps, sharedApps, sharedCandidates, sharedReqs] = await Promise.all([
         fetchAdminApplications().catch(() => []),
         fetchSharedResumeGodamEntries().catch(() => []),
+        fetchSharedCandidatesAsApplications().catch(() => []),
         fetchSharedCompanyRequirements().catch(() => []),
       ]);
-      if (serverApps.length > 0 || sharedApps.length > 0) {
+      if (serverApps.length > 0 || sharedApps.length > 0 || sharedCandidates.length > 0) {
         setAdminApplications((prev) => {
-          const next = mergeApplicationsLists(prev, serverApps, sharedApps);
+          const next = mergeApplicationsLists(prev, serverApps, sharedApps, sharedCandidates);
           saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
           return next;
         });
@@ -436,7 +525,13 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
     });
-    return () => unsubscribe();
+    const unsubscribeVisitors = subscribeCumulativeVisitorsFromFirestore((stats) => {
+      setVisitorStats(stats);
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeVisitors();
+    };
   }, []);
 
   useEffect(() => {
@@ -529,14 +624,53 @@ export default function App() {
       !restoringGoogleRef.current
     ) {
       restoringGoogleRef.current = true;
+      const email = String(firebaseUser.email || '').trim().toLowerCase();
+      const targetRole: UserRole =
+        email === 'cvforvcs@gmail.com' ? 'admin' : loginPortalRole || 'candidate';
       firebaseUser
         .getIdToken()
-        .then((idToken) => loginWithGoogleToken(idToken, loginPortalRole || 'candidate'))
+        .then((idToken) => loginWithGoogleToken(idToken, targetRole))
         .then((res) => {
-          setCandidate(res.candidate);
+          if (res?.candidate) {
+            setCandidate(res.candidate);
+            return;
+          }
+          if (email === 'cvforvcs@gmail.com') {
+            const fallbackAdmin: CandidateProfile = {
+              id: firebaseUser.uid,
+              role: 'admin',
+              name: firebaseUser.displayName || 'Vardhman Consultancy Owner',
+              email,
+              phone: firebaseUser.phoneNumber || '',
+              city: 'Jaipur',
+              experience: 'Owner / Admin',
+              resumeId: null,
+              resumeFileName: null,
+              resumeUpdatedAt: null,
+              createdAt: new Date().toISOString(),
+            };
+            setCachedCandidateProfile(fallbackAdmin);
+            setCandidate(fallbackAdmin);
+          }
         })
         .catch(() => {
-          // Ignore silent session restore errors
+          if (email === 'cvforvcs@gmail.com') {
+            const fallbackAdmin: CandidateProfile = {
+              id: firebaseUser.uid,
+              role: 'admin',
+              name: firebaseUser.displayName || 'Vardhman Consultancy Owner',
+              email,
+              phone: firebaseUser.phoneNumber || '',
+              city: 'Jaipur',
+              experience: 'Owner / Admin',
+              resumeId: null,
+              resumeFileName: null,
+              resumeUpdatedAt: null,
+              createdAt: new Date().toISOString(),
+            };
+            setCachedCandidateProfile(fallbackAdmin);
+            setCandidate(fallbackAdmin);
+          }
         })
         .finally(() => {
           restoringGoogleRef.current = false;
@@ -620,19 +754,40 @@ export default function App() {
         })
       );
       unsubscribers.push(
+        subscribeSharedCandidatesAsApplications((sharedCands) => {
+          setAdminApplications((prev) => {
+            const next = mergeApplicationsLists(prev, sharedCands);
+            saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+            return next;
+          });
+          setIsLoadingAdminApplications(false);
+        })
+      );
+      unsubscribers.push(
+        subscribeAdminUsersFromFirestore((usersList) => {
+          setRegisteredUsers(usersList);
+        })
+      );
+      unsubscribers.push(
         subscribeSharedCompanyRequirements((reqs) => {
           setCompanyRequirements(reqs);
           saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, reqs);
         })
       );
+      unsubscribers.push(
+        subscribeSharedClientQueries((queries) => {
+          setClientQueries(queries);
+        })
+      );
       void Promise.all([
         fetchAdminApplications().catch(() => []),
         fetchSharedResumeGodamEntries().catch(() => []),
+        fetchSharedCandidatesAsApplications().catch(() => []),
         fetchSharedCompanyRequirements().catch(() => []),
-      ]).then(([serverApps, sharedApps, sharedReqs]) => {
-        if (serverApps.length > 0 || sharedApps.length > 0) {
+      ]).then(([serverApps, sharedApps, sharedCands, sharedReqs]) => {
+        if (serverApps.length > 0 || sharedApps.length > 0 || sharedCands.length > 0) {
           setAdminApplications((prev) => {
-            const next = mergeApplicationsLists(prev, serverApps, sharedApps);
+            const next = mergeApplicationsLists(prev, serverApps, sharedApps, sharedCands);
             saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
             return next;
           });
@@ -672,6 +827,18 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  useEffect(() => {
+    const selectedJob =
+      currentPage === 'job-details' && selectedJobId
+        ? approvedJobs.find((job) => job.id === selectedJobId) || null
+        : null;
+    updateSeoForRoute({
+      page: currentPage,
+      selectedJob,
+      approvedJobs,
+    });
+  }, [currentPage, selectedJobId, approvedJobs]);
 
   useEffect(() => {
     if (currentPage !== 'job-details' || !selectedJobId) return;
@@ -1150,6 +1317,49 @@ export default function App() {
     handleNavigateRoleDashboard(loggedInUser);
   };
 
+  const handleOwnerGoogleSignIn = async () => {
+    const cred = await signInWithPopup(auth, googleProvider);
+    const email = String(cred.user.email || '').trim().toLowerCase();
+    if (!cred.user.emailVerified || email !== 'cvforvcs@gmail.com') {
+      await signOut(auth).catch(() => {});
+      throw new Error(
+        'Access restricted to authorized Google account only.'
+      );
+    }
+
+    let adminProfile: CandidateProfile | null = null;
+    try {
+      const idToken = await cred.user.getIdToken();
+      const res = await loginWithGoogleToken(idToken, 'admin');
+      if (res?.candidate?.role === 'admin') {
+        adminProfile = res.candidate;
+      }
+    } catch {
+      // On static Firebase Hosting, /api/auth/google is absent — build owner session from verified Firebase Auth
+    }
+
+    if (!adminProfile) {
+      adminProfile = {
+        id: cred.user.uid,
+        role: 'admin',
+        name: cred.user.displayName || 'Vardhman Consultancy Owner',
+        email,
+        phone: cred.user.phoneNumber || '',
+        city: 'Jaipur',
+        experience: 'Owner / Admin',
+        resumeId: null,
+        resumeFileName: null,
+        resumeUpdatedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      setCachedCandidateProfile(adminProfile);
+    }
+
+    setCandidate(adminProfile);
+    void syncUserProfileToFirestore(adminProfile).catch(() => {});
+    navigateToHashPage('admin-dashboard', '#admin-dashboard');
+  };
+
   const handleLogout = () => {
     void signOut(auth).catch(() => {});
     setStoredToken(null);
@@ -1159,6 +1369,8 @@ export default function App() {
     setEmployerApplications([]);
     setAdminJobs([]);
     setAdminApplications([]);
+    setRegisteredUsers([]);
+    setClientQueries([]);
     setAutoApproveEnabled(false);
     setPendingApplyJob(null);
     setPendingPostJob(false);
@@ -1482,7 +1694,10 @@ export default function App() {
             candidate={candidate}
             jobs={adminJobs}
             applications={adminApplications}
+            registeredUsers={registeredUsers}
             companyRequirements={companyRequirements}
+            clientQueries={clientQueries}
+            visitorStats={visitorStats}
             isLoading={isLoadingAdminJobs}
             isLoadingApplications={isLoadingAdminApplications}
             autoApproveEnabled={autoApproveEnabled}
@@ -1491,6 +1706,7 @@ export default function App() {
             onPostNewJob={handlePostJobAction}
             onUpdateStatus={handleAdminStatusUpdate}
             onManageVcsInsights={handleNavigateVcsInsights}
+            onOwnerGoogleSignIn={handleOwnerGoogleSignIn}
             onLogout={handleLogout}
             onGoToLogin={() => handleNavigateLogin('admin')}
             onGoToRegister={() => handleNavigateRegister('admin')}
@@ -1566,6 +1782,10 @@ export default function App() {
         onNavigateInterviewTips={handleNavigateInterviewTips}
         onNavigateJobSeekerTerms={handleNavigateJobSeekerTerms}
         onNavigateContactUs={handleNavigateContactUs}
+        onNavigateAdminDashboard={() => {
+          loadAdminJobsList();
+          navigateToHashPage('admin-dashboard', '#admin-dashboard');
+        }}
         onSubmitResume={handleUploadResumeAction}
       />
 

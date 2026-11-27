@@ -12,9 +12,12 @@ import {
 } from '../utils/languageTranslator';
 import { getOrCreateVisitorId } from '../utils/candidateApi';
 import {
+  getCachedVisitorStats,
   getIstDateKey,
-  recordDailyVisitorHitInFirestore,
-  subscribeDailyVisitorsFromFirestore,
+  recordCumulativeVisitorHitInFirestore,
+  saveCachedVisitorStats,
+  SiteVisitorStats,
+  subscribeCumulativeVisitorsFromFirestore,
 } from '../utils/firestorePortal';
 import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
@@ -27,6 +30,7 @@ interface FooterProps {
   onNavigateInterviewTips: () => void;
   onNavigateJobSeekerTerms: () => void;
   onNavigateContactUs: () => void;
+  onNavigateAdminDashboard?: () => void;
   onSubmitResume?: () => void;
 }
 
@@ -39,12 +43,15 @@ export function Footer({
   onNavigateInterviewTips,
   onNavigateJobSeekerTerms,
   onNavigateContactUs,
+  onNavigateAdminDashboard,
   onSubmitResume,
 }: FooterProps) {
   const [logoError, setLogoError] = useState(false);
   const [selectedLang, setSelectedLang] = useState<string>(() => getSavedLanguage());
   const [isTranslating, setIsTranslating] = useState(false);
-  const [dailyVisitors, setDailyVisitors] = useState<number | null>(null);
+  const [visitorStats, setVisitorStats] = useState<SiteVisitorStats | null>(() =>
+    getCachedVisitorStats()
+  );
   const [todayKey, setTodayKey] = useState<string>(() => getIstDateKey());
   const currentYear = new Date().getFullYear();
 
@@ -85,9 +92,8 @@ export function Footer({
 
   useEffect(() => {
     let active = true;
-    setDailyVisitors(null);
     const visitorId = getOrCreateVisitorId();
-    const trackedSessionKey = `vcs_daily_visit_firestore_${todayKey}`;
+    const trackedSessionKey = `vcs_cumulative_visit_firestore_${todayKey}`;
     const alreadyTracked =
       typeof window !== 'undefined' &&
       window.sessionStorage?.getItem(trackedSessionKey) === '1';
@@ -108,25 +114,43 @@ export function Footer({
           : await fetch('/api/public/daily-visitors');
         const contentType = res.headers.get('content-type') || '';
         if (!res.ok || !contentType.includes('application/json')) return;
-        const data = (await res.json()) as { dailyVisitors?: number };
-        if (active && !receivedFirestoreUpdate && typeof data.dailyVisitors === 'number') {
-          setDailyVisitors(data.dailyVisitors);
+        const data = (await res.json()) as {
+          dailyVisitors?: number;
+          totalVisitors?: number;
+        };
+        const total =
+          typeof data.totalVisitors === 'number'
+            ? data.totalVisitors
+            : data.dailyVisitors;
+        if (active && !receivedFirestoreUpdate && typeof total === 'number') {
+          setVisitorStats((prev) => {
+            const nextTotal = Math.max(prev?.totalCount ?? 0, total);
+            const nextToday = typeof data.dailyVisitors === 'number' ? data.dailyVisitors : 0;
+            const merged = {
+              totalCount: nextTotal,
+              todayCount: nextToday,
+              todayDate: todayKey,
+            };
+            if (nextTotal > 0) {
+              saveCachedVisitorStats(merged);
+            }
+            return merged;
+          });
         }
       } catch {
         // Ignore when running on static Firebase Hosting without /api backend
       }
     };
 
-    const unsubscribe = subscribeDailyVisitorsFromFirestore(
-      todayKey,
-      (count) => {
+    const unsubscribe = subscribeCumulativeVisitorsFromFirestore(
+      (stats) => {
         if (!active) return;
         receivedFirestoreUpdate = true;
-        setDailyVisitors((prev) => {
-          if (count === 0 && prev !== null && prev > 0) {
+        setVisitorStats((prev) => {
+          if (stats.totalCount === 0 && prev && prev.totalCount > 0) {
             return prev;
           }
-          return count;
+          return stats;
         });
       },
       () => {
@@ -135,15 +159,19 @@ export function Footer({
     );
 
     if (!alreadyTracked) {
-      void recordDailyVisitorHitInFirestore(visitorId, todayKey).then((nextCount) => {
+      void recordCumulativeVisitorHitInFirestore(visitorId, todayKey).then((nextStats) => {
         if (!active) return;
-        if (typeof nextCount === 'number') {
+        if (nextStats) {
           try {
             window.sessionStorage?.setItem(trackedSessionKey, '1');
           } catch {
             // Ignore sessionStorage errors
           }
-          setDailyVisitors((prev) => Math.max(prev ?? 0, nextCount));
+          setVisitorStats((prev) => ({
+            totalCount: Math.max(prev?.totalCount ?? 0, nextStats.totalCount),
+            todayCount: Math.max(prev?.todayCount ?? 0, nextStats.todayCount),
+            todayDate: nextStats.todayDate,
+          }));
         } else {
           void syncBackendFallback(true);
         }
@@ -315,7 +343,7 @@ export function Footer({
           </div>
         </div>
 
-        {/* Footer Bottom Row: Copyright + Language Converter + Daily Visitor Counter */}
+        {/* Footer Bottom Row: Copyright + Language Converter + Cumulative Visitor Counter */}
         <div className="pt-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs text-slate-400">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
             <p>
@@ -326,19 +354,37 @@ export function Footer({
             </span>
             <p className="text-slate-400">
               100% Free Placement Services for Every Candidate · Jaipur, India
+              {onNavigateAdminDashboard && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    onClick={onNavigateAdminDashboard}
+                    className="text-[11px] text-slate-400/70 hover:text-slate-200 transition-colors cursor-pointer"
+                  >
+                    Jobsnia
+                  </button>
+                </>
+              )}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {/* Daily Visitor Counter (Footer Bottom Only) */}
+            {/* Cumulative Website Visitor Counter (Footer Bottom Only) */}
             <div
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 border border-white/15 text-slate-200"
-              title="Unique Daily Visitors Today"
+              title={
+                visitorStats
+                  ? `Cumulative Website Visitors: ${visitorStats.totalCount.toLocaleString('en-IN')} (+${visitorStats.todayCount.toLocaleString('en-IN')} today)`
+                  : 'Cumulative Website Visitors'
+              }
             >
               <Eye className="w-3.5 h-3.5 text-[#F6D574] shrink-0" aria-hidden="true" />
-              <span className="text-slate-300">Daily Visitors:</span>
+              <span className="text-slate-300">Total Visitors:</span>
               <span className="font-bold text-white tabular-nums">
-                {dailyVisitors !== null ? dailyVisitors.toLocaleString('en-IN') : '—'}
+                {visitorStats !== null
+                  ? visitorStats.totalCount.toLocaleString('en-IN')
+                  : '—'}
               </span>
             </div>
 
