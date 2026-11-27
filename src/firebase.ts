@@ -27,16 +27,8 @@ function createPersistentFirestore(firebaseApp: FirebaseApp, databaseId: string)
   }
 }
 
-const currentHost =
-  typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
-const isJobsniaCustomHost =
-  currentHost === 'www.jobsnia.com' || currentHost === 'jobsnia.com';
-const activeFirebaseConfig = isJobsniaCustomHost
-  ? { ...firebaseConfig, authDomain: currentHost }
-  : firebaseConfig;
-
-const app = initializeApp(activeFirebaseConfig);
-export const db = createPersistentFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
+const app = initializeApp(firebaseConfig);
+export const db = createPersistentFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
