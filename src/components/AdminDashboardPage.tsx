@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Clock,
   Download,
+  ExternalLink,
   Eye,
   FileCheck2,
   FileText,
@@ -906,6 +907,43 @@ export function AdminDashboardPage({
                 <span>Logout</span>
               </button>
             </div>
+          </div>
+
+          {/* Owner-Only Private Workspace Links (Subdomains) */}
+          <div className="mt-5 pt-4 border-t border-white/15 flex flex-wrap items-center gap-2.5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#F6D574] mr-1">
+              VCS Private Suite:
+            </span>
+            <a
+              href="https://cvdex.jobsnia.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-white/12 hover:bg-white/22 border border-white/20 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+              <span>CVDex (Resume Godam)</span>
+              <ExternalLink className="w-3 h-3 text-slate-300" aria-hidden="true" />
+            </a>
+            <a
+              href="https://invoices.jobsnia.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-white/12 hover:bg-white/22 border border-white/20 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
+            >
+              <FileCheck2 className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+              <span>GST Invoices</span>
+              <ExternalLink className="w-3 h-3 text-slate-300" aria-hidden="true" />
+            </a>
+            <a
+              href="https://crm.jobsnia.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-white/12 hover:bg-white/22 border border-white/20 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
+            >
+              <Users className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+              <span>CRM</span>
+              <ExternalLink className="w-3 h-3 text-slate-300" aria-hidden="true" />
+            </a>
           </div>
 
           {/* Owner Overview Strip (5 Interactive KPI Cards) */}
