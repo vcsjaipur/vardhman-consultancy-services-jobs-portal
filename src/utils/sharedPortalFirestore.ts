@@ -19,7 +19,12 @@ import {
   OperationType,
   sharedDb,
 } from '../firebase';
-import { JobApplication, JobListing } from '../types/portal';
+import {
+  FirestoreSubscriptionError,
+  JobApplication,
+  JobListing,
+} from '../types/portal';
+import { buildFirestoreSubscriptionError } from './adminErrorTracker';
 import { CONFIDENTIAL_COMPANY_LABEL } from './jobHelpers';
 
 export const MAX_SHARED_RESUME_BASE64_CHARS = 800000;
@@ -105,6 +110,27 @@ function logSharedFirestoreFailure(
   }
 }
 
+function reportSharedSubscriptionError(
+  error: unknown,
+  feedKey: string,
+  sourceLabel: string,
+  operationType: OperationType,
+  path: string,
+  onError?: (err: FirestoreSubscriptionError) => void
+): FirestoreSubscriptionError {
+  logSharedFirestoreFailure(error, operationType, path);
+  const built = buildFirestoreSubscriptionError({
+    feedKey,
+    sourceLabel,
+    database: 'shared',
+    operationType,
+    path,
+    error,
+  });
+  onError?.(built);
+  return built;
+}
+
 function mapSharedJobData(id: string, d: DocumentData): JobListing {
   const jobTitle = String(
     d.jobTitle || d.title || d.designation || d.role || 'Job Opening'
@@ -174,7 +200,7 @@ function sortSharedJobsNewestFirst(
 
 export function subscribeSharedActiveJobs(
   onUpdate: (jobs: JobListing[]) => void,
-  onError?: (friendlyMessage: string) => void
+  onError?: (friendlyMessage: string, details?: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'jobs';
   const q = query(
@@ -189,8 +215,14 @@ export function subscribeSharedActiveJobs(
       onUpdate(jobs);
     },
     (error) => {
-      logSharedFirestoreFailure(error, OperationType.LIST, path);
-      onError?.('Something went wrong, please try again.');
+      const details = reportSharedSubscriptionError(
+        error,
+        'shared-active-jobs',
+        'Shared Portal Active Jobs',
+        OperationType.LIST,
+        path
+      );
+      onError?.(details.friendlyMessage, details);
     }
   );
 }
@@ -887,11 +919,23 @@ function mapSharedApplicationDocs(
   );
 }
 
-export async function fetchSharedResumeGodamEntries(): Promise<JobApplication[]> {
+export async function fetchSharedResumeGodamEntries(
+  onError?: (error: FirestoreSubscriptionError) => void
+): Promise<JobApplication[]> {
   try {
     const [appsSnap, candsSnap] = await Promise.all([
       getDocs(collection(sharedDb, 'applications')),
-      getDocs(collection(sharedDb, 'candidates')).catch(() => null),
+      getDocs(collection(sharedDb, 'candidates')).catch((candErr) => {
+        reportSharedSubscriptionError(
+          candErr,
+          'shared-resume-candidates',
+          'Shared Resume Candidates',
+          OperationType.LIST,
+          'candidates',
+          onError
+        );
+        return null;
+      }),
     ]);
 
     const candById = new Map<string, DocumentData>();
@@ -903,13 +947,22 @@ export async function fetchSharedResumeGodamEntries(): Promise<JobApplication[]>
     }
 
     return mapSharedApplicationDocs(appsSnap.docs, candById);
-  } catch {
+  } catch (error) {
+    reportSharedSubscriptionError(
+      error,
+      'shared-resume-applications',
+      'Shared Portal Applications',
+      OperationType.LIST,
+      'applications',
+      onError
+    );
     return [];
   }
 }
 
 export function subscribeSharedResumeGodamEntries(
-  onUpdate: (entries: JobApplication[]) => void
+  onUpdate: (entries: JobApplication[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const candById = new Map<string, DocumentData>();
   let latestAppDocs: QueryDocumentSnapshot<DocumentData>[] = [];
@@ -928,8 +981,15 @@ export function subscribeSharedResumeGodamEntries(
       }
       emit();
     },
-    () => {
-      // Non-fatal if candidate collection listener is temporarily throttled
+    (error) => {
+      reportSharedSubscriptionError(
+        error,
+        'shared-resume-candidates',
+        'Shared Resume Candidates',
+        OperationType.LIST,
+        'candidates',
+        onError
+      );
     }
   );
 
@@ -939,8 +999,15 @@ export function subscribeSharedResumeGodamEntries(
       latestAppDocs = snapshot.docs;
       onUpdate(mapSharedApplicationDocs(latestAppDocs, candById));
     },
-    () => {
-      // Retain existing application state on transient listener errors
+    (error) => {
+      reportSharedSubscriptionError(
+        error,
+        'shared-resume-applications',
+        'Shared Portal Applications',
+        OperationType.LIST,
+        'applications',
+        onError
+      );
     }
   );
 
@@ -987,27 +1054,45 @@ function mapCompanyRequirementDocs(
     .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
 }
 
-export async function fetchSharedCompanyRequirements(): Promise<
-  SharedCompanyRequirementRecord[]
-> {
+export async function fetchSharedCompanyRequirements(
+  onError?: (error: FirestoreSubscriptionError) => void
+): Promise<SharedCompanyRequirementRecord[]> {
+  const path = 'company_requirements';
   try {
-    const snap = await getDocs(collection(sharedDb, 'company_requirements'));
+    const snap = await getDocs(collection(sharedDb, path));
     return mapCompanyRequirementDocs(snap.docs);
-  } catch {
+  } catch (error) {
+    reportSharedSubscriptionError(
+      error,
+      'shared-company-requirements',
+      'Shared Company Requirements',
+      OperationType.LIST,
+      path,
+      onError
+    );
     return [];
   }
 }
 
 export function subscribeSharedCompanyRequirements(
-  onUpdate: (entries: SharedCompanyRequirementRecord[]) => void
+  onUpdate: (entries: SharedCompanyRequirementRecord[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
+  const path = 'company_requirements';
   return onSnapshot(
-    collection(sharedDb, 'company_requirements'),
+    collection(sharedDb, path),
     (snapshot) => {
       onUpdate(mapCompanyRequirementDocs(snapshot.docs));
     },
-    () => {
-      // Non-fatal if collection listener is unavailable offline
+    (error) => {
+      reportSharedSubscriptionError(
+        error,
+        'shared-company-requirements',
+        'Shared Company Requirements',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -1040,15 +1125,24 @@ function mapClientQueryDocs(
 }
 
 export function subscribeSharedClientQueries(
-  onUpdate: (entries: SharedClientQueryRecord[]) => void
+  onUpdate: (entries: SharedClientQueryRecord[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
+  const path = 'client_queries';
   return onSnapshot(
-    collection(sharedDb, 'client_queries'),
+    collection(sharedDb, path),
     (snapshot) => {
       onUpdate(mapClientQueryDocs(snapshot.docs));
     },
-    () => {
-      // Non-fatal if collection listener is unavailable offline
+    (error) => {
+      reportSharedSubscriptionError(
+        error,
+        'shared-client-queries',
+        'Shared Client Inquiries',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -1105,25 +1199,45 @@ function mapSharedCandidateDocsToApplications(
     .sort((a, b) => Date.parse(b.appliedAt || '') - Date.parse(a.appliedAt || ''));
 }
 
-export async function fetchSharedCandidatesAsApplications(): Promise<JobApplication[]> {
+export async function fetchSharedCandidatesAsApplications(
+  onError?: (error: FirestoreSubscriptionError) => void
+): Promise<JobApplication[]> {
+  const path = 'candidates';
   try {
-    const snap = await getDocs(collection(sharedDb, 'candidates'));
+    const snap = await getDocs(collection(sharedDb, path));
     return mapSharedCandidateDocsToApplications(snap.docs);
-  } catch {
+  } catch (error) {
+    reportSharedSubscriptionError(
+      error,
+      'shared-candidates-feed',
+      'Shared Candidate Registrations',
+      OperationType.LIST,
+      path,
+      onError
+    );
     return [];
   }
 }
 
 export function subscribeSharedCandidatesAsApplications(
-  onUpdate: (entries: JobApplication[]) => void
+  onUpdate: (entries: JobApplication[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
+  const path = 'candidates';
   return onSnapshot(
-    collection(sharedDb, 'candidates'),
+    collection(sharedDb, path),
     (snapshot) => {
       onUpdate(mapSharedCandidateDocsToApplications(snapshot.docs));
     },
-    () => {
-      // Non-fatal if collection listener is unavailable offline
+    (error) => {
+      reportSharedSubscriptionError(
+        error,
+        'shared-candidates-feed',
+        'Shared Candidate Registrations',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }

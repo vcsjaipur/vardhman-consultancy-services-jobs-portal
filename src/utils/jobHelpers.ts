@@ -144,12 +144,23 @@ export function toFriendlyPortalError(
   error: unknown,
   fallback = 'Something went wrong, please try again.'
 ): string {
+  const errCode =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
   const raw = error instanceof Error ? error.message : String(error ?? '');
   const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (
+    errCode === 'BACKEND_UNAVAILABLE' ||
+    lower.includes('server api is unavailable')
+  ) {
+    return 'Please use Continue with Google or try again in a moment.';
+  }
   if (!trimmed || trimmed.startsWith('{')) {
     return fallback;
   }
-  const lower = trimmed.toLowerCase();
   if (lower.includes('auth/unauthorized-domain')) {
     return 'This domain is not authorized for Google Sign-In yet. Add both jobsnia.com and www.jobsnia.com in Firebase Console → Authentication → Settings → Authorized domains.';
   }

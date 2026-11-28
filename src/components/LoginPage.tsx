@@ -26,10 +26,14 @@ import {
   normalizeLoginIdentifier,
   resetCandidateCredentials,
   sendAuthOtp,
+  setCachedCandidateProfile,
   setStoredToken,
   verifyAuthOtp,
 } from '../utils/candidateApi';
-import { syncUserProfileToFirestore } from '../utils/firestorePortal';
+import {
+  resolveGoogleUserProfileFromFirestore,
+  syncUserProfileToFirestore,
+} from '../utils/firestorePortal';
 import { toFriendlyPortalError } from '../utils/jobHelpers';
 import { PORTAL_BRAND_LOGO_SRC } from './Header';
 
@@ -125,20 +129,18 @@ export function LoginPage({
         );
         signedInUser = res.candidate;
       } catch (backendErr) {
-        if (cred.user.emailVerified && email === 'cvforvcs@gmail.com') {
-          signedInUser = {
-            id: cred.user.uid,
-            role: 'admin',
-            name: cred.user.displayName || 'Vardhman Consultancy Owner',
-            email,
-            phone: cred.user.phoneNumber || '',
-            city: 'Jaipur',
-            experience: 'Owner / Admin',
-            resumeId: null,
-            resumeFileName: null,
-            resumeUpdatedAt: null,
-            createdAt: new Date().toISOString(),
-          };
+        if (
+          cred.user.emailVerified &&
+          (backendErr instanceof ApiRequestError
+            ? backendErr.code === 'BACKEND_UNAVAILABLE' || backendErr.status >= 500 || backendErr.status === 404 || backendErr.status === 405
+            : true)
+        ) {
+          signedInUser = await resolveGoogleUserProfileFromFirestore(
+            cred.user,
+            email === 'cvforvcs@gmail.com' ? 'admin' : portalRole
+          );
+          setStoredToken(`static_google_${signedInUser.id}`);
+          setCachedCandidateProfile(signedInUser);
         } else {
           throw backendErr;
         }

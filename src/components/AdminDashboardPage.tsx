@@ -24,6 +24,7 @@ import {
   MessageSquare,
   Newspaper,
   Phone,
+  RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -35,11 +36,14 @@ import {
 import { VCS_TERMS_DOCUMENT } from '../constants/jobSeekerTerms';
 import {
   AdminEmailStatusResponse,
+  AdminErrorNotification,
   CandidateProfile,
+  FirestoreSubscriptionError,
   JobApplication,
   JobApprovalStatus,
   JobListing,
 } from '../types/portal';
+import { buildFirestoreSubscriptionError } from '../utils/adminErrorTracker';
 import {
   auditCompanyRequirementCompleteness,
   auditEmployerProfileCompleteness,
@@ -70,6 +74,7 @@ import {
   SharedClientQueryRecord,
   SharedCompanyRequirementRecord,
 } from '../utils/sharedPortalFirestore';
+import { AdminErrorTrackerOverlay } from './AdminErrorTrackerOverlay';
 import { PORTAL_BRAND_LOGO_SRC } from './Header';
 import { DashboardCardSkeleton } from './SkeletonLoaders';
 
@@ -84,6 +89,11 @@ interface AdminDashboardPageProps {
   isLoading: boolean;
   isLoadingApplications?: boolean;
   autoApproveEnabled?: boolean;
+  adminErrors?: AdminErrorNotification[];
+  onReportAdminError?: (error: FirestoreSubscriptionError) => void;
+  onDismissAdminError?: (errorId: string) => void;
+  onClearAdminErrors?: () => void;
+  onRetryAdminSubscriptions?: () => Promise<void>;
   onToggleAutoApprove?: (enabled: boolean) => Promise<void>;
   onSyncApprovedJobs?: () => Promise<number>;
   onPostNewJob?: () => void;
@@ -152,6 +162,11 @@ export function AdminDashboardPage({
   isLoading,
   isLoadingApplications = false,
   autoApproveEnabled = false,
+  adminErrors = [],
+  onReportAdminError,
+  onDismissAdminError,
+  onClearAdminErrors,
+  onRetryAdminSubscriptions,
   onToggleAutoApprove,
   onSyncApprovedJobs,
   onPostNewJob,
@@ -176,6 +191,8 @@ export function AdminDashboardPage({
   const [isSyncingApproved, setIsSyncingApproved] = useState(false);
   const [syncNotice, setSyncNotice] = useState('');
   const [actionError, setActionError] = useState('');
+  const [isErrorTrackerOpen, setIsErrorTrackerOpen] = useState(false);
+  const [isRetryingFeeds, setIsRetryingFeeds] = useState(false);
   const [cvPreview, setCvPreview] = useState<{
     applicantName: string;
     fileName: string;
@@ -191,6 +208,39 @@ export function AdminDashboardPage({
   const [isTestingEmail, setIsTestingEmail] = useState(false);
   const [isRetryingEmails, setIsRetryingEmails] = useState(false);
   const [emailActionFeedback, setEmailActionFeedback] = useState('');
+
+  const visibleAdminErrors = useMemo(
+    () => adminErrors.filter((item) => !item.dismissed),
+    [adminErrors]
+  );
+  const activeAdminErrors = useMemo(
+    () => visibleAdminErrors.filter((item) => !item.resolved),
+    [visibleAdminErrors]
+  );
+  const latestActiveError = activeAdminErrors[0] ?? null;
+
+  const reportDiagnosticError = (params: {
+    feedKey: string;
+    sourceLabel: string;
+    database: 'primary' | 'shared' | 'api';
+    operationType: string;
+    path: string;
+    error: unknown;
+  }): FirestoreSubscriptionError => {
+    const diagnostic = buildFirestoreSubscriptionError(params);
+    onReportAdminError?.(diagnostic);
+    return diagnostic;
+  };
+
+  const handleRetryAllFeeds = async () => {
+    if (!onRetryAdminSubscriptions) return;
+    setIsRetryingFeeds(true);
+    try {
+      await onRetryAdminSubscriptions();
+    } finally {
+      setIsRetryingFeeds(false);
+    }
+  };
 
   const loadEmailForwardStatus = async () => {
     if (!getStoredToken()) {
@@ -222,15 +272,29 @@ export function AdminDashboardPage({
           `Test email delivered via ${res.smtpHostUsed || 'SMTP'} to info@vardhmanconsultancy.com & the authorized admin inbox.`
         );
       } else {
-        setEmailActionFeedback(
-          res.error || 'Email was queued because SMTP credentials are not configured on the server.'
-        );
+        const msg =
+          res.error || 'Email was queued because SMTP credentials are not configured on the server.';
+        setEmailActionFeedback(msg);
+        reportDiagnosticError({
+          feedKey: 'admin-email-test',
+          sourceLabel: 'Admin Test Email Dispatch',
+          database: 'api',
+          operationType: 'write',
+          path: '/api/admin/email-test',
+          error: msg,
+        });
       }
       await loadEmailForwardStatus();
     } catch (err) {
-      setEmailActionFeedback(
-        err instanceof Error ? err.message : 'Unable to send test email right now.'
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-email-test',
+        sourceLabel: 'Admin Test Email Dispatch',
+        database: 'api',
+        operationType: 'write',
+        path: '/api/admin/email-test',
+        error: err,
+      });
+      setEmailActionFeedback(diagnostic.friendlyMessage);
     } finally {
       setIsTestingEmail(false);
     }
@@ -246,9 +310,15 @@ export function AdminDashboardPage({
       );
       await loadEmailForwardStatus();
     } catch (err) {
-      setEmailActionFeedback(
-        err instanceof Error ? err.message : 'Unable to retry queued emails right now.'
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-email-retry',
+        sourceLabel: 'Admin Email Queue Retry',
+        database: 'api',
+        operationType: 'write',
+        path: '/api/admin/email-retry',
+        error: err,
+      });
+      setEmailActionFeedback(diagnostic.friendlyMessage);
     } finally {
       setIsRetryingEmails(false);
     }
@@ -724,9 +794,15 @@ export function AdminDashboardPage({
         };
       });
     } catch (err) {
-      setActionError(
-        toFriendlyPortalError(err, 'Unable to open CV preview right now.')
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-cv-preview',
+        sourceLabel: `CV Preview (${app.applicantName || app.id})`,
+        database: 'api',
+        operationType: 'get',
+        path: `resumes/${app.resumeId || app.id}`,
+        error: err,
+      });
+      setActionError(diagnostic.friendlyMessage);
     } finally {
       setBusyCvAppId(null);
     }
@@ -746,9 +822,15 @@ export function AdminDashboardPage({
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
     } catch (err) {
-      setActionError(
-        toFriendlyPortalError(err, 'Unable to download CV PDF right now.')
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-cv-download',
+        sourceLabel: `CV Download (${app.applicantName || app.id})`,
+        database: 'api',
+        operationType: 'get',
+        path: `resumes/${app.resumeId || app.id}`,
+        error: err,
+      });
+      setActionError(diagnostic.friendlyMessage);
     } finally {
       setBusyCvAppId(null);
     }
@@ -767,9 +849,15 @@ export function AdminDashboardPage({
     try {
       await onUpdateStatus(jobId, decision);
     } catch (err) {
-      setActionError(
-        toFriendlyPortalError(err, 'Unable to update job status right now.')
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-job-decision',
+        sourceLabel: `Job ${decision} Action`,
+        database: 'primary',
+        operationType: 'write',
+        path: `jobs/${jobId}`,
+        error: err,
+      });
+      setActionError(diagnostic.friendlyMessage);
     } finally {
       setBusyJobId(null);
     }
@@ -782,9 +870,15 @@ export function AdminDashboardPage({
     try {
       await onToggleAutoApprove(!autoApproveEnabled);
     } catch (err) {
-      setActionError(
-        toFriendlyPortalError(err, 'Unable to update job workflow setting.')
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'auto-approve-setting',
+        sourceLabel: 'Job Workflow Setting',
+        database: 'primary',
+        operationType: 'write',
+        path: 'portal_settings/jobs',
+        error: err,
+      });
+      setActionError(diagnostic.friendlyMessage);
     } finally {
       setIsTogglingAutoApprove(false);
     }
@@ -803,9 +897,15 @@ export function AdminDashboardPage({
           : 'All approved jobs are already published on the live portal.'
       );
     } catch (err) {
-      setActionError(
-        toFriendlyPortalError(err, 'Unable to publish approved jobs right now.')
-      );
+      const diagnostic = reportDiagnosticError({
+        feedKey: 'admin-sync-approved-jobs',
+        sourceLabel: 'Publish Approved Jobs',
+        database: 'primary',
+        operationType: 'write',
+        path: 'public_jobs',
+        error: err,
+      });
+      setActionError(diagnostic.friendlyMessage);
     } finally {
       setIsSyncingApproved(false);
     }
@@ -888,6 +988,27 @@ export function AdminDashboardPage({
                   <span>Post New Job</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setIsErrorTrackerOpen(true)}
+                className={`min-h-[44px] px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap cursor-pointer ${
+                  activeAdminErrors.length > 0
+                    ? 'bg-red-600 hover:bg-red-700 border border-red-400 text-white shadow-sm'
+                    : 'bg-white/12 hover:bg-white/22 border border-white/25 text-white'
+                }`}
+              >
+                {activeAdminErrors.length > 0 ? (
+                  <ShieldAlert className="w-4 h-4 text-amber-200" aria-hidden="true" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4 text-emerald-300" aria-hidden="true" />
+                )}
+                <span>
+                  {activeAdminErrors.length > 0
+                    ? `System Alerts (${activeAdminErrors.length})`
+                    : `Error Tracker (${visibleAdminErrors.length})`}
+                </span>
+              </button>
 
               <button
                 type="button"
@@ -1036,6 +1157,97 @@ export function AdminDashboardPage({
       {/* Main Content */}
       <section className="py-8 sm:py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Live Firestore & Portal Error Notification Banner */}
+          {latestActiveError && (
+            <div
+              role="alert"
+              className={`mb-6 rounded-2xl border p-4 sm:p-5 shadow-sm ${
+                latestActiveError.severity === 'critical'
+                  ? 'bg-red-50 border-red-300 text-red-950'
+                  : 'bg-amber-50 border-amber-300 text-amber-950'
+              }`}
+            >
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold ${
+                        latestActiveError.severity === 'critical'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-amber-600 text-white'
+                      }`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>
+                        {activeAdminErrors.length} Active Error
+                        {activeAdminErrors.length === 1 ? '' : 's'}
+                      </span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-white border border-slate-300 text-[#063B7A] text-xs font-semibold">
+                      {latestActiveError.sourceLabel}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-white/80 border border-slate-200 font-mono text-[11px] text-slate-700">
+                      {latestActiveError.code} · {latestActiveError.path}
+                    </span>
+                  </div>
+
+                  <p className="text-sm font-semibold leading-snug">
+                    {latestActiveError.friendlyMessage}
+                  </p>
+
+                  {activeAdminErrors.length > 1 && (
+                    <p className="text-xs opacity-85">
+                      Also affected:{' '}
+                      {activeAdminErrors
+                        .slice(1, 4)
+                        .map((item) => item.sourceLabel)
+                        .join(', ')}
+                      {activeAdminErrors.length > 4
+                        ? ` (+${activeAdminErrors.length - 4} more)`
+                        : ''}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsErrorTrackerOpen(true)}
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#062856] hover:bg-[#041C3F] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5 text-[#F6D574]" aria-hidden="true" />
+                    <span>Inspect All ({activeAdminErrors.length})</span>
+                  </button>
+
+                  {onRetryAdminSubscriptions && (
+                    <button
+                      type="button"
+                      disabled={isRetryingFeeds}
+                      onClick={() => void handleRetryAllFeeds()}
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-[#063B7A] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap disabled:opacity-60"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${isRetryingFeeds ? 'animate-spin' : ''}`}
+                        aria-hidden="true"
+                      />
+                      <span>{isRetryingFeeds ? 'Retrying...' : 'Retry Feeds'}</span>
+                    </button>
+                  )}
+
+                  {onDismissAdminError && (
+                    <button
+                      type="button"
+                      onClick={() => onDismissAdminError(latestActiveError.id)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white/80 hover:bg-white border border-slate-300 text-slate-700 text-xs font-semibold cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Auto-Approve Workflow Switch */}
           {onToggleAutoApprove && (
             <div className="mb-6 bg-white border border-slate-200 rounded-2xl shadow-xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2141,6 +2353,16 @@ export function AdminDashboardPage({
           </div>
         </div>
       )}
+
+      <AdminErrorTrackerOverlay
+        isOpen={isErrorTrackerOpen}
+        errors={adminErrors}
+        isRetrying={isRetryingFeeds}
+        onClose={() => setIsErrorTrackerOpen(false)}
+        onRetrySubscriptions={handleRetryAllFeeds}
+        onDismissError={(errorId) => onDismissAdminError?.(errorId)}
+        onClearAll={() => onClearAdminErrors?.()}
+      />
     </div>
   );
 }

@@ -25,6 +25,7 @@ import {
   normalizeMobileInput,
   readResumeFileAsBase64,
   registerCandidate,
+  setCachedCandidateProfile,
   setStoredToken,
 } from '../utils/candidateApi';
 import {
@@ -32,7 +33,12 @@ import {
   loadFormDraft,
   saveFormDraft,
 } from '../utils/formDraftStorage';
-import { createJobInFirestore, syncUserProfileToFirestore } from '../utils/firestorePortal';
+import {
+  createJobInFirestore,
+  createResumeGodamEntryInFirestore,
+  resolveGoogleUserProfileFromFirestore,
+  syncUserProfileToFirestore,
+} from '../utils/firestorePortal';
 import { toFriendlyPortalError } from '../utils/jobHelpers';
 import {
   MAX_SHARED_RESUME_BASE64_CHARS,
@@ -217,8 +223,28 @@ export function RegisterPage({
     setIsSubmitting(true);
     try {
       const cred = await signInWithPopup(auth, googleProvider);
-      const idToken = await cred.user.getIdToken();
-      const { candidate } = await loginWithGoogleToken(idToken, role);
+      let candidate: CandidateProfile | null = null;
+      try {
+        const idToken = await cred.user.getIdToken();
+        const res = await loginWithGoogleToken(idToken, role);
+        candidate = res.candidate;
+      } catch (backendErr) {
+        if (
+          cred.user.emailVerified &&
+          (backendErr instanceof ApiRequestError
+            ? backendErr.code === 'BACKEND_UNAVAILABLE' || backendErr.status >= 500 || backendErr.status === 404 || backendErr.status === 405
+            : true)
+        ) {
+          candidate = await resolveGoogleUserProfileFromFirestore(cred.user, role);
+          setStoredToken(`static_google_${candidate.id}`);
+          setCachedCandidateProfile(candidate);
+        } else {
+          throw backendErr;
+        }
+      }
+      if (!candidate) {
+        throw new Error('Unable to complete Google sign-in.');
+      }
       if (role === 'admin' && candidate.role !== 'admin') {
         setStoredToken(null);
         await signOut(auth).catch(() => {});
@@ -355,35 +381,92 @@ export function RegisterPage({
 
     setIsSubmitting(true);
     try {
-      const { candidate } = await registerCandidate({
-        role: 'candidate',
-        name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        password,
-        pin: pin.trim() || undefined,
-        city: city.trim() || 'India',
-        experience: experience || 'Fresher',
-        resumeFileName: resumeFile.fileName,
-        resumeBase64: resumeFile.base64,
-        termsAccepted: true,
-      });
-      void syncResumeProfileToSharedCandidates({
-        name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        city: city.trim() || 'India',
-        postApplied: 'Job Seeker',
-        experience: experience || 'Fresher',
-        resumeFileName: resumeFile.fileName,
-        resumeBase64:
+      let registeredCandidate: CandidateProfile;
+      try {
+        const { candidate } = await registerCandidate({
+          role: 'candidate',
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          password,
+          pin: pin.trim() || undefined,
+          city: city.trim() || 'India',
+          experience: experience || 'Fresher',
+          resumeFileName: resumeFile.fileName,
+          resumeBase64: resumeFile.base64,
+          termsAccepted: true,
+        });
+        registeredCandidate = candidate;
+        void syncResumeProfileToSharedCandidates({
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: city.trim() || 'India',
+          postApplied: 'Job Seeker',
+          experience: experience || 'Fresher',
+          resumeFileName: resumeFile.fileName,
+          resumeBase64:
+            resumeFile.base64.length <= MAX_SHARED_RESUME_BASE64_CHARS
+              ? resumeFile.base64
+              : '',
+          termsAccepted: true,
+        }).catch(() => null);
+      } catch (apiErr) {
+        if (!(apiErr instanceof ApiRequestError && apiErr.code === 'BACKEND_UNAVAILABLE')) {
+          throw apiErr;
+        }
+        const candId = await syncResumeProfileToSharedCandidates({
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: city.trim() || 'India',
+          postApplied: 'Job Seeker',
+          experience: experience || 'Fresher',
+          resumeFileName: resumeFile.fileName,
+          resumeBase64:
+            resumeFile.base64.length <= MAX_SHARED_RESUME_BASE64_CHARS
+              ? resumeFile.base64
+              : '',
+          termsAccepted: true,
+        });
+        if (
+          resumeFile.fileName.toLowerCase().endsWith('.pdf') &&
           resumeFile.base64.length <= MAX_SHARED_RESUME_BASE64_CHARS
-            ? resumeFile.base64
-            : '',
-        termsAccepted: true,
-      }).catch(() => null);
+        ) {
+          void createResumeGodamEntryInFirestore({
+            entryId: candId,
+            jobId: 'general_resume',
+            jobTitle: 'Candidate Registration',
+            companyMasked: 'Vardhman Consultancy Services',
+            applicantName: cleanName,
+            applicantEmail: cleanEmail,
+            applicantPhone: cleanPhone,
+            city: city.trim() || 'India',
+            qualificationExperience: experience || 'Fresher',
+            resumeFileName: resumeFile.fileName,
+            resumeBase64: resumeFile.base64,
+            termsAccepted: true,
+          }).catch(() => null);
+        }
+        registeredCandidate = {
+          id: candId,
+          role: 'candidate',
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: city.trim() || 'India',
+          experience: experience || 'Fresher',
+          resumeId: candId,
+          resumeFileName: resumeFile.fileName,
+          resumeUpdatedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          termsAccepted: true,
+        };
+        setStoredToken(`static_${candId}`);
+        setCachedCandidateProfile(registeredCandidate);
+      }
       clearFormDraft(REGISTER_DRAFT_KEY);
-      onSuccess(candidate);
+      onSuccess(registeredCandidate);
     } catch (err) {
       if (
         err instanceof ApiRequestError &&
@@ -461,25 +544,104 @@ export function RegisterPage({
 
     setIsSubmitting(true);
     try {
-      const { candidate, initialJob } = await registerCandidate({
-        role,
-        name: fullName.trim(),
-        email: cleanEmail,
-        phone: role === 'admin' ? cleanPhone : undefined,
-        password,
-        pin: pin.trim() || undefined,
-        city: city.trim() || undefined,
-        companyName: role === 'employer' ? companyName.trim() : undefined,
-        fullAddress: role === 'employer' ? fullAddress.trim() : undefined,
-        currentRequirements:
-          role === 'employer' && currentRequirements.trim()
-            ? currentRequirements.trim()
-            : undefined,
-        jdFileName: role === 'employer' && jdFile ? jdFile.fileName : undefined,
-        jdBase64: role === 'employer' && jdFile ? jdFile.base64 : undefined,
-      });
+      let registeredUser: CandidateProfile;
+      let initialJob: JobListing | null = null;
+      let sharedSyncedAlready = false;
 
-      let syncedInitialJob = initialJob || null;
+      try {
+        const res = await registerCandidate({
+          role,
+          name: fullName.trim(),
+          email: cleanEmail,
+          phone: role === 'admin' ? cleanPhone : undefined,
+          password,
+          pin: pin.trim() || undefined,
+          city: city.trim() || undefined,
+          companyName: role === 'employer' ? companyName.trim() : undefined,
+          fullAddress: role === 'employer' ? fullAddress.trim() : undefined,
+          currentRequirements:
+            role === 'employer' && currentRequirements.trim()
+              ? currentRequirements.trim()
+              : undefined,
+          jdFileName: role === 'employer' && jdFile ? jdFile.fileName : undefined,
+          jdBase64: role === 'employer' && jdFile ? jdFile.base64 : undefined,
+        });
+        registeredUser = res.candidate;
+        initialJob = res.initialJob || null;
+      } catch (apiErr) {
+        if (!(apiErr instanceof ApiRequestError && apiErr.code === 'BACKEND_UNAVAILABLE')) {
+          throw apiErr;
+        }
+        if (role !== 'employer') {
+          setSubmitError('Please use Continue with Google for Admin access.');
+          return;
+        }
+
+        const jdBody = [
+          currentRequirements.trim() ||
+            'Employer registered on portal (Detailed JD pending)',
+          jdFile ? `Attached JD File: ${jdFile.fileName}` : '',
+          `Official Email: ${cleanEmail}`,
+          `Address: ${fullAddress.trim()}`,
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+
+        const reqId = await submitCompanyRequirementToSharedPortal({
+          companyName: companyName.trim(),
+          contactPerson: fullName.trim(),
+          phone: cleanPhone || cleanEmail,
+          city: city.trim() || fullAddress.trim() || 'Pan India',
+          postRequired: `${companyName.trim()} — Employer Registration`,
+          salary: 'Negotiable',
+          vacancyCount: 1,
+          jobDescription: jdBody,
+        });
+        sharedSyncedAlready = true;
+
+        registeredUser = {
+          id: reqId,
+          role: 'employer',
+          name: fullName.trim(),
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: city.trim() || fullAddress.trim() || 'India',
+          experience: 'Employer',
+          companyName: companyName.trim(),
+          resumeId: null,
+          resumeFileName: null,
+          resumeUpdatedAt: null,
+          createdAt: new Date().toISOString(),
+        };
+
+        if (currentRequirements.trim()) {
+          initialJob = {
+            id: reqId,
+            title: `${companyName.trim()} — Hiring Requirement`,
+            designation: 'Hiring Requirement',
+            company: companyName.trim(),
+            recruiterName: fullName.trim(),
+            recruiterEmail: cleanEmail,
+            recruiterPhone: cleanPhone,
+            location: city.trim() || fullAddress.trim() || 'Pan India',
+            experience: 'As per JD',
+            salary: 'Negotiable',
+            jobType: 'Full-Time',
+            skills: ['Relevant Experience'],
+            description: currentRequirements.trim(),
+            qualification: 'As per JD',
+            openings: 1,
+            lastDateToApply: 'Open Until Filled',
+            postedAt: new Date().toISOString().slice(0, 10),
+            status: 'Pending',
+          };
+        }
+
+        setStoredToken(`static_${reqId}`);
+        setCachedCandidateProfile(registeredUser);
+      }
+
+      let syncedInitialJob = initialJob;
       if (initialJob && auth.currentUser?.emailVerified) {
         try {
           syncedInitialJob = await createJobInFirestore({
@@ -505,7 +667,7 @@ export function RegisterPage({
         }
       }
 
-      if (role === 'employer') {
+      if (role === 'employer' && !sharedSyncedAlready) {
         const jdBody = [
           currentRequirements.trim() ||
             initialJob?.description ||
@@ -531,7 +693,7 @@ export function RegisterPage({
       }
 
       clearFormDraft(REGISTER_DRAFT_KEY);
-      onSuccess(candidate, syncedInitialJob);
+      onSuccess(registeredUser, syncedInitialJob);
     } catch (err) {
       if (
         err instanceof ApiRequestError &&

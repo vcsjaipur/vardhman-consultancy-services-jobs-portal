@@ -419,3 +419,29 @@ export interface InsightPost {
   updatedAt: string | null;
 }
 
+export type FirestoreErrorDatabase = 'primary' | 'shared' | 'api';
+
+export interface FirestoreSubscriptionError {
+  feedKey: string;
+  sourceLabel: string;
+  database: FirestoreErrorDatabase;
+  operationType: string;
+  path: string;
+  code: string;
+  friendlyMessage: string;
+  rawMessage: string;
+  severity: 'critical' | 'warning';
+  timestamp: string;
+}
+
+export interface AdminErrorNotification extends FirestoreSubscriptionError {
+  id: string;
+  occurrences: number;
+  firstOccurredAt: string;
+  lastOccurredAt: string;
+  resolved: boolean;
+  resolvedAt?: string;
+  dismissed: boolean;
+}
+
+

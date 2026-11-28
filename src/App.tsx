@@ -28,8 +28,10 @@ import { WhyChooseSection } from './components/WhyChooseSection';
 import { CompanySection } from './components/CompanySection';
 import { OfflineBanner } from './components/OfflineBanner';
 import {
+  AdminErrorNotification,
   CandidateProfile,
   CongratulationsContext,
+  FirestoreSubscriptionError,
   InsightPost,
   JobApplication,
   JobListing,
@@ -40,6 +42,11 @@ import {
   SearchPageFilters,
   UserRole,
 } from './types/portal';
+import {
+  buildFirestoreSubscriptionError,
+  markAdminFeedResolved,
+  upsertAdminError,
+} from './utils/adminErrorTracker';
 import {
   addInsightComment,
   createInsightPost,
@@ -67,6 +74,7 @@ import {
   fetchGlobalAutoApproveSetting,
   fetchPublicJobById,
   getCachedVisitorStats,
+  resolveGoogleUserProfileFromFirestore,
   setGlobalAutoApproveSetting,
   SiteVisitorStats,
   subscribeAdminApplicationsFromFirestore,
@@ -356,6 +364,8 @@ export default function App() {
   );
   const [isLoadingAdminApplications, setIsLoadingAdminApplications] = useState(false);
   const [autoApproveEnabled, setAutoApproveEnabled] = useState(false);
+  const [adminErrors, setAdminErrors] = useState<AdminErrorNotification[]>([]);
+  const [adminSubscriptionRetrySeq, setAdminSubscriptionRetrySeq] = useState(0);
 
   const [insightsPosts, setInsightsPosts] = useState<InsightPost[]>(() =>
     loadOfflineCache<InsightPost[]>(OFFLINE_CACHE_KEYS.insightsPosts, [])
@@ -470,14 +480,36 @@ export default function App() {
     }
   };
 
+  const reportAdminError = (err: FirestoreSubscriptionError) => {
+    setAdminErrors((prev) => upsertAdminError(prev, err));
+  };
+
+  const markAdminFeedHealthy = (feedKey: string) => {
+    setAdminErrors((prev) => markAdminFeedResolved(prev, feedKey));
+  };
+
   const loadAdminJobsList = async () => {
     setIsLoadingAdminApplications(true);
     try {
       const [serverApps, sharedApps, sharedCandidates, sharedReqs] = await Promise.all([
-        fetchAdminApplications().catch(() => []),
-        fetchSharedResumeGodamEntries().catch(() => []),
-        fetchSharedCandidatesAsApplications().catch(() => []),
-        fetchSharedCompanyRequirements().catch(() => []),
+        fetchAdminApplications().catch((err) => {
+          if (auth.currentUser?.emailVerified) {
+            reportAdminError(
+              buildFirestoreSubscriptionError({
+                feedKey: 'admin-api-applications',
+                sourceLabel: 'Admin Applications API',
+                database: 'api',
+                operationType: 'get',
+                path: '/api/admin/applications',
+                error: err,
+              })
+            );
+          }
+          return [];
+        }),
+        fetchSharedResumeGodamEntries(reportAdminError).catch(() => []),
+        fetchSharedCandidatesAsApplications(reportAdminError).catch(() => []),
+        fetchSharedCompanyRequirements(reportAdminError).catch(() => []),
       ]);
       if (serverApps.length > 0 || sharedApps.length > 0 || sharedCandidates.length > 0) {
         setAdminApplications((prev) => {
@@ -501,8 +533,18 @@ export default function App() {
     try {
       const list = await fetchAdminJobs();
       setAdminJobs(list);
-    } catch {
+    } catch (err) {
       setAdminJobs([]);
+      reportAdminError(
+        buildFirestoreSubscriptionError({
+          feedKey: 'admin-api-jobs',
+          sourceLabel: 'Admin Jobs API',
+          database: 'api',
+          operationType: 'get',
+          path: '/api/admin/jobs',
+          error: err,
+        })
+      );
     } finally {
       setIsLoadingAdminJobs(false);
     }
@@ -525,9 +567,15 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
     });
-    const unsubscribeVisitors = subscribeCumulativeVisitorsFromFirestore((stats) => {
-      setVisitorStats(stats);
-    });
+    const unsubscribeVisitors = subscribeCumulativeVisitorsFromFirestore(
+      (stats) => {
+        setVisitorStats(stats);
+        markAdminFeedHealthy('visitor-stats');
+      },
+      (err) => {
+        reportAdminError(err);
+      }
+    );
     return () => {
       unsubscribe();
       unsubscribeVisitors();
@@ -538,19 +586,44 @@ export default function App() {
     const stopSyncDaemon = startSharedAutoSyncDaemon();
     const stopApiDaemon = startOfflineApiDaemon();
 
-    const unsubscribeSharedJobs = subscribeSharedActiveJobs((jobsList) => {
-      sharedActiveJobsRef.current = jobsList;
-      applyMergedApprovedJobs();
-      setIsLoadingPublicJobs(false);
-    });
+    const unsubscribeSharedJobs = subscribeSharedActiveJobs(
+      (jobsList) => {
+        sharedActiveJobsRef.current = jobsList;
+        applyMergedApprovedJobs();
+        setIsLoadingPublicJobs(false);
+        markAdminFeedHealthy('shared-active-jobs');
+      },
+      (friendlyMessage, details) => {
+        setIsLoadingPublicJobs(false);
+        if (details) {
+          reportAdminError(details);
+        } else {
+          reportAdminError(
+            buildFirestoreSubscriptionError({
+              feedKey: 'shared-active-jobs',
+              sourceLabel: 'Shared Portal Active Jobs',
+              database: 'shared',
+              operationType: 'list',
+              path: 'jobs',
+              error: friendlyMessage,
+            })
+          );
+        }
+      }
+    );
 
     const unsubscribePrimaryJobs = subscribeApprovedPublicJobs(
       (jobsList) => {
         primaryPublicJobsRef.current = jobsList;
         applyMergedApprovedJobs();
         setIsLoadingPublicJobs(false);
+        markAdminFeedHealthy('public-jobs');
       },
-      200
+      200,
+      (err) => {
+        setIsLoadingPublicJobs(false);
+        reportAdminError(err);
+      }
     );
 
     void loadApprovedJobs();
@@ -635,42 +708,20 @@ export default function App() {
             setCandidate(res.candidate);
             return;
           }
-          if (email === 'cvforvcs@gmail.com') {
-            const fallbackAdmin: CandidateProfile = {
-              id: firebaseUser.uid,
-              role: 'admin',
-              name: firebaseUser.displayName || 'Vardhman Consultancy Owner',
-              email,
-              phone: firebaseUser.phoneNumber || '',
-              city: 'Jaipur',
-              experience: 'Owner / Admin',
-              resumeId: null,
-              resumeFileName: null,
-              resumeUpdatedAt: null,
-              createdAt: new Date().toISOString(),
-            };
-            setCachedCandidateProfile(fallbackAdmin);
-            setCandidate(fallbackAdmin);
-          }
+          return resolveGoogleUserProfileFromFirestore(firebaseUser, targetRole).then(
+            (profile) => {
+              setCachedCandidateProfile(profile);
+              setCandidate(profile);
+            }
+          );
         })
         .catch(() => {
-          if (email === 'cvforvcs@gmail.com') {
-            const fallbackAdmin: CandidateProfile = {
-              id: firebaseUser.uid,
-              role: 'admin',
-              name: firebaseUser.displayName || 'Vardhman Consultancy Owner',
-              email,
-              phone: firebaseUser.phoneNumber || '',
-              city: 'Jaipur',
-              experience: 'Owner / Admin',
-              resumeId: null,
-              resumeFileName: null,
-              resumeUpdatedAt: null,
-              createdAt: new Date().toISOString(),
-            };
-            setCachedCandidateProfile(fallbackAdmin);
-            setCandidate(fallbackAdmin);
-          }
+          return resolveGoogleUserProfileFromFirestore(firebaseUser, targetRole)
+            .then((profile) => {
+              setCachedCandidateProfile(profile);
+              setCandidate(profile);
+            })
+            .catch(() => {});
         })
         .finally(() => {
           restoringGoogleRef.current = false;
@@ -726,64 +777,118 @@ export default function App() {
       setIsLoadingAdminJobs(true);
       setIsLoadingAdminApplications(true);
       unsubscribers.push(
-        subscribeAdminJobsFromFirestore((jobsList) => {
-          setAdminJobs(jobsList);
-          setIsLoadingAdminJobs(false);
-        })
+        subscribeAdminJobsFromFirestore(
+          (jobsList) => {
+            setAdminJobs(jobsList);
+            setIsLoadingAdminJobs(false);
+            markAdminFeedHealthy('admin-jobs');
+          },
+          (err) => {
+            setIsLoadingAdminJobs(false);
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeAdminApplicationsFromFirestore((apps) => {
-          setAdminApplications((prev) => mergeApplicationsLists(prev, apps));
-          setIsLoadingAdminApplications(false);
-        })
+        subscribeAdminApplicationsFromFirestore(
+          (apps) => {
+            setAdminApplications((prev) => mergeApplicationsLists(prev, apps));
+            setIsLoadingAdminApplications(false);
+            markAdminFeedHealthy('admin-applications');
+          },
+          (err) => {
+            setIsLoadingAdminApplications(false);
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeAdminResumeGodamFromFirestore((godamApps) => {
-          setAdminApplications((prev) => mergeApplicationsLists(prev, godamApps));
-          setIsLoadingAdminApplications(false);
-        })
+        subscribeAdminResumeGodamFromFirestore(
+          (godamApps) => {
+            setAdminApplications((prev) => mergeApplicationsLists(prev, godamApps));
+            setIsLoadingAdminApplications(false);
+            markAdminFeedHealthy('admin-resume-godam');
+          },
+          (err) => {
+            setIsLoadingAdminApplications(false);
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeSharedResumeGodamEntries((sharedApps) => {
-          setAdminApplications((prev) => {
-            const next = mergeApplicationsLists(prev, sharedApps);
-            saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
-            return next;
-          });
-          setIsLoadingAdminApplications(false);
-        })
+        subscribeSharedResumeGodamEntries(
+          (sharedApps) => {
+            setAdminApplications((prev) => {
+              const next = mergeApplicationsLists(prev, sharedApps);
+              saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+              return next;
+            });
+            setIsLoadingAdminApplications(false);
+            markAdminFeedHealthy('shared-resume-applications');
+            markAdminFeedHealthy('shared-resume-candidates');
+          },
+          (err) => {
+            setIsLoadingAdminApplications(false);
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeSharedCandidatesAsApplications((sharedCands) => {
-          setAdminApplications((prev) => {
-            const next = mergeApplicationsLists(prev, sharedCands);
-            saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
-            return next;
-          });
-          setIsLoadingAdminApplications(false);
-        })
+        subscribeSharedCandidatesAsApplications(
+          (sharedCands) => {
+            setAdminApplications((prev) => {
+              const next = mergeApplicationsLists(prev, sharedCands);
+              saveOfflineCache(OFFLINE_CACHE_KEYS.adminApplications, next);
+              return next;
+            });
+            setIsLoadingAdminApplications(false);
+            markAdminFeedHealthy('shared-candidates-feed');
+          },
+          (err) => {
+            setIsLoadingAdminApplications(false);
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeAdminUsersFromFirestore((usersList) => {
-          setRegisteredUsers(usersList);
-        })
+        subscribeAdminUsersFromFirestore(
+          (usersList) => {
+            setRegisteredUsers(usersList);
+            markAdminFeedHealthy('admin-users');
+          },
+          (err) => {
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeSharedCompanyRequirements((reqs) => {
-          setCompanyRequirements(reqs);
-          saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, reqs);
-        })
+        subscribeSharedCompanyRequirements(
+          (reqs) => {
+            setCompanyRequirements(reqs);
+            saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, reqs);
+            markAdminFeedHealthy('shared-company-requirements');
+          },
+          (err) => {
+            reportAdminError(err);
+          }
+        )
       );
       unsubscribers.push(
-        subscribeSharedClientQueries((queries) => {
-          setClientQueries(queries);
-        })
+        subscribeSharedClientQueries(
+          (queries) => {
+            setClientQueries(queries);
+            markAdminFeedHealthy('shared-client-queries');
+          },
+          (err) => {
+            reportAdminError(err);
+          }
+        )
       );
       void Promise.all([
         fetchAdminApplications().catch(() => []),
-        fetchSharedResumeGodamEntries().catch(() => []),
-        fetchSharedCandidatesAsApplications().catch(() => []),
-        fetchSharedCompanyRequirements().catch(() => []),
+        fetchSharedResumeGodamEntries(reportAdminError).catch(() => []),
+        fetchSharedCandidatesAsApplications(reportAdminError).catch(() => []),
+        fetchSharedCompanyRequirements(reportAdminError).catch(() => []),
       ]).then(([serverApps, sharedApps, sharedCands, sharedReqs]) => {
         if (serverApps.length > 0 || sharedApps.length > 0 || sharedCands.length > 0) {
           setAdminApplications((prev) => {
@@ -796,16 +901,31 @@ export default function App() {
           setCompanyRequirements(sharedReqs);
           saveOfflineCache(OFFLINE_CACHE_KEYS.companyRequirements, sharedReqs);
         }
+        setIsLoadingAdminApplications(false);
       });
       fetchGlobalAutoApproveSetting()
-        .then(setAutoApproveEnabled)
-        .catch(() => {});
+        .then((enabled) => {
+          setAutoApproveEnabled(enabled);
+          markAdminFeedHealthy('auto-approve-setting');
+        })
+        .catch((err) => {
+          reportAdminError(
+            buildFirestoreSubscriptionError({
+              feedKey: 'auto-approve-setting',
+              sourceLabel: 'Job Workflow Setting',
+              database: 'primary',
+              operationType: 'get',
+              path: 'portal_settings/jobs',
+              error: err,
+            })
+          );
+        });
     }
 
     return () => {
       unsubscribers.forEach((unsub) => unsub());
     };
-  }, [firebaseUser, candidate?.id, candidate?.role]);
+  }, [firebaseUser, candidate?.id, candidate?.role, adminSubscriptionRetrySeq]);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -1371,11 +1491,27 @@ export default function App() {
     setAdminApplications([]);
     setRegisteredUsers([]);
     setClientQueries([]);
+    setAdminErrors([]);
     setAutoApproveEnabled(false);
     setPendingApplyJob(null);
     setPendingPostJob(false);
     loadInsightsFeed();
     navigateToHome();
+  };
+
+  const handleDismissAdminError = (errorId: string) => {
+    setAdminErrors((prev) =>
+      prev.map((item) => (item.id === errorId ? { ...item, dismissed: true } : item))
+    );
+  };
+
+  const handleClearAdminErrors = () => {
+    setAdminErrors([]);
+  };
+
+  const handleRetryAdminSubscriptions = async () => {
+    setAdminSubscriptionRetrySeq((seq) => seq + 1);
+    await Promise.all([loadAdminJobsList(), loadApprovedJobs()]);
   };
 
   const handleApplicationSubmitted = (newApp: JobApplication) => {
@@ -1701,6 +1837,11 @@ export default function App() {
             isLoading={isLoadingAdminJobs}
             isLoadingApplications={isLoadingAdminApplications}
             autoApproveEnabled={autoApproveEnabled}
+            adminErrors={adminErrors}
+            onReportAdminError={reportAdminError}
+            onDismissAdminError={handleDismissAdminError}
+            onClearAdminErrors={handleClearAdminErrors}
+            onRetryAdminSubscriptions={handleRetryAdminSubscriptions}
             onToggleAutoApprove={handleToggleAutoApprove}
             onSyncApprovedJobs={handleSyncApprovedJobs}
             onPostNewJob={handlePostJobAction}

@@ -36,12 +36,14 @@ import {
   WorkExperienceEntry,
 } from '../types/portal';
 import {
+  ApiRequestError,
   downloadResumePdf,
   generateAiResumeAssist,
   normalizeEmailInput,
   normalizeMobileInput,
   readImageFileAsBase64,
   readResumeFileAsBase64,
+  setCachedCandidateProfile,
   updateCandidateProfile,
   uploadCandidatePhoto,
   uploadCandidateResume,
@@ -479,7 +481,21 @@ export function DashboardPage({
 
     try {
       const parsed = await readResumeFileAsBase64(file);
-      const updatedCandidate = await uploadCandidateResume(parsed.fileName, parsed.base64);
+      let updatedCandidate: CandidateProfile;
+      try {
+        updatedCandidate = await uploadCandidateResume(parsed.fileName, parsed.base64);
+      } catch (apiErr) {
+        if (!(apiErr instanceof ApiRequestError && apiErr.code === 'BACKEND_UNAVAILABLE')) {
+          throw apiErr;
+        }
+        updatedCandidate = {
+          ...candidate,
+          resumeId: candidate.resumeId || candidate.id,
+          resumeFileName: parsed.fileName,
+          resumeUpdatedAt: new Date().toISOString(),
+        };
+        setCachedCandidateProfile(updatedCandidate);
+      }
       void syncResumeProfileToSharedCandidates({
         name: updatedCandidate.name || candidate.name,
         email: updatedCandidate.email || candidate.email,
@@ -665,38 +681,79 @@ export function DashboardPage({
 
     setProfileSaving(true);
     try {
-      const updated = await updateCandidateProfile({
-        name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        city: cleanCity,
-        districtCity: cleanDistrict,
-        state: stateName.trim(),
-        pinCode: pinCode.trim(),
-        dob: dob.trim(),
-        fatherName: fatherName.trim(),
-        motherName: motherName.trim(),
-        maritalStatus: maritalStatus.trim(),
-        spouseName: spouseName.trim(),
-        emergencyContact: emergencyContact.trim(),
-        experience,
-        qualification: qualification.trim(),
-        currentCompany: currentCompany.trim(),
-        designation: designation.trim(),
-        currentCtc: currentCtc.trim(),
-        expectedSalary: expectedSalary.trim(),
-        noticePeriod: noticePeriod.trim(),
-        jobType: jobType.trim(),
-        preferredLocation: preferredLocation.trim(),
-        preferredRole: preferredRole.trim(),
-        resumeHeadline: resumeHeadline.trim(),
-        profileSummary: profileSummary.trim(),
-        careerSummary: careerSummary.trim(),
-        resumeSummary: resumeSummary.trim(),
-        keySkills,
-        academicDetails,
-        workExperience,
-      });
+      let updated: CandidateProfile;
+      try {
+        updated = await updateCandidateProfile({
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: cleanCity,
+          districtCity: cleanDistrict,
+          state: stateName.trim(),
+          pinCode: pinCode.trim(),
+          dob: dob.trim(),
+          fatherName: fatherName.trim(),
+          motherName: motherName.trim(),
+          maritalStatus: maritalStatus.trim(),
+          spouseName: spouseName.trim(),
+          emergencyContact: emergencyContact.trim(),
+          experience,
+          qualification: qualification.trim(),
+          currentCompany: currentCompany.trim(),
+          designation: designation.trim(),
+          currentCtc: currentCtc.trim(),
+          expectedSalary: expectedSalary.trim(),
+          noticePeriod: noticePeriod.trim(),
+          jobType: jobType.trim(),
+          preferredLocation: preferredLocation.trim(),
+          preferredRole: preferredRole.trim(),
+          resumeHeadline: resumeHeadline.trim(),
+          profileSummary: profileSummary.trim(),
+          careerSummary: careerSummary.trim(),
+          resumeSummary: resumeSummary.trim(),
+          keySkills,
+          academicDetails,
+          workExperience,
+        });
+      } catch (apiErr) {
+        if (!(apiErr instanceof ApiRequestError && apiErr.code === 'BACKEND_UNAVAILABLE')) {
+          throw apiErr;
+        }
+        updated = {
+          ...candidate,
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          city: cleanCity,
+          districtCity: cleanDistrict,
+          state: stateName.trim() || null,
+          pinCode: pinCode.trim() || null,
+          dob: dob.trim() || null,
+          fatherName: fatherName.trim() || null,
+          motherName: motherName.trim() || null,
+          maritalStatus: maritalStatus.trim() || null,
+          spouseName: spouseName.trim() || null,
+          emergencyContact: emergencyContact.trim() || null,
+          experience,
+          qualification: qualification.trim() || null,
+          currentCompany: currentCompany.trim() || null,
+          designation: designation.trim() || null,
+          currentCtc: currentCtc.trim() || null,
+          expectedSalary: expectedSalary.trim() || null,
+          noticePeriod: noticePeriod.trim() || null,
+          jobType: jobType.trim() || null,
+          preferredLocation: preferredLocation.trim() || null,
+          preferredRole: preferredRole.trim() || null,
+          resumeHeadline: resumeHeadline.trim() || null,
+          profileSummary: profileSummary.trim() || null,
+          careerSummary: careerSummary.trim() || null,
+          resumeSummary: resumeSummary.trim() || null,
+          keySkills,
+          academicDetails,
+          workExperience,
+        };
+        setCachedCandidateProfile(updated);
+      }
       const workHistoryStrings = workExperience
         .filter((w) => w.company.trim() || w.designation.trim())
         .map((w) =>

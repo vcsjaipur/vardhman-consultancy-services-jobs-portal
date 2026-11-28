@@ -494,6 +494,9 @@ export async function loginWithGoogleToken(
 export async function fetchCurrentCandidate(): Promise<CandidateProfile | null> {
   const token = getStoredToken();
   if (!token) return null;
+  if (token.startsWith('static_')) {
+    return getCachedCandidateProfile();
+  }
   try {
     const result = await apiRequest<{ candidate: CandidateProfile }>('/api/auth/me');
     setCachedCandidateProfile(result.candidate);

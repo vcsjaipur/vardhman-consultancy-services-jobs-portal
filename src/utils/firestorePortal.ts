@@ -18,14 +18,17 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import type { User } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import {
   CandidateProfile,
+  FirestoreSubscriptionError,
   JobApplication,
   JobApprovalStatus,
   JobListing,
   UserRole,
 } from '../types/portal';
+import { buildFirestoreSubscriptionError } from './adminErrorTracker';
 import { CONFIDENTIAL_COMPANY_LABEL } from './jobHelpers';
 
 export const JOBS_PER_PAGE = 20;
@@ -203,7 +206,8 @@ function sortJobDocsNewestFirst(docs: QueryDocumentSnapshot<DocumentData>[]): Jo
  */
 export function subscribeApprovedPublicJobs(
   onUpdate: (jobs: JobListing[], lastCursor: QueryDocumentSnapshot<DocumentData> | null, hasMore: boolean) => void,
-  batchSize = 200
+  batchSize = 200,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'public_jobs';
   const q = query(
@@ -220,7 +224,14 @@ export function subscribeApprovedPublicJobs(
       onUpdate(jobs, lastCursor, hasMore);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      reportPrimarySubscriptionError(
+        error,
+        'public-jobs',
+        'Approved Public Jobs',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -571,7 +582,8 @@ export function subscribeEmployerJobsFromFirestore(
 }
 
 export function subscribeAdminJobsFromFirestore(
-  onUpdate: (jobs: JobListing[]) => void
+  onUpdate: (jobs: JobListing[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'jobs';
   return onSnapshot(
@@ -583,7 +595,14 @@ export function subscribeAdminJobsFromFirestore(
       onUpdate(sorted);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      reportPrimarySubscriptionError(
+        error,
+        'admin-jobs',
+        'Primary Job Mandates',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -732,7 +751,8 @@ export function subscribeEmployerApplicationsFromFirestore(
 }
 
 export function subscribeAdminApplicationsFromFirestore(
-  onUpdate: (applications: JobApplication[]) => void
+  onUpdate: (applications: JobApplication[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'applications';
   return onSnapshot(
@@ -744,7 +764,14 @@ export function subscribeAdminApplicationsFromFirestore(
       onUpdate(sorted);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      reportPrimarySubscriptionError(
+        error,
+        'admin-applications',
+        'Primary Applications',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -790,6 +817,71 @@ export async function syncUserProfileToFirestore(profile: CandidateProfile): Pro
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
+}
+
+export async function resolveGoogleUserProfileFromFirestore(
+  firebaseUser: User,
+  preferredRole: UserRole = 'candidate'
+): Promise<CandidateProfile> {
+  const uid = sanitizeId(firebaseUser.uid);
+  const email = String(firebaseUser.email || '').trim().toLowerCase();
+  let existingData: DocumentData | null = null;
+
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      existingData = snap.data();
+    }
+  } catch {
+    // Proceed cleanly even if initial Firestore read fails offline
+  }
+
+  const existingRoleRaw = String(existingData?.role || '').toLowerCase();
+  const resolvedRole: UserRole =
+    email === 'cvforvcs@gmail.com'
+      ? 'admin'
+      : existingRoleRaw === 'employer' || existingRoleRaw === 'candidate'
+        ? (existingRoleRaw as UserRole)
+        : preferredRole === 'employer'
+          ? 'employer'
+          : 'candidate';
+
+  const fallbackName =
+    resolvedRole === 'admin'
+      ? 'Vardhman Consultancy Owner'
+      : resolvedRole === 'employer'
+        ? 'Employer Account'
+        : 'Candidate';
+
+  const profile: CandidateProfile = {
+    id: uid,
+    role: resolvedRole,
+    name: String(existingData?.name || firebaseUser.displayName || fallbackName).trim(),
+    email: String(existingData?.email || email).trim().toLowerCase(),
+    phone: String(existingData?.phone || firebaseUser.phoneNumber || '').trim(),
+    city: String(existingData?.city || (resolvedRole === 'admin' ? 'Jaipur' : 'India')).trim(),
+    experience: String(
+      existingData?.experience ||
+        (resolvedRole === 'admin'
+          ? 'Owner / Admin'
+          : resolvedRole === 'employer'
+            ? 'Employer'
+            : 'Fresher')
+    ).trim(),
+    companyName:
+      typeof existingData?.companyName === 'string' ? existingData.companyName : null,
+    resumeId: null,
+    resumeFileName:
+      typeof existingData?.resumeFileName === 'string' ? existingData.resumeFileName : null,
+    resumeUpdatedAt: null,
+    createdAt: existingData?.createdAt
+      ? formatFirestoreDate(existingData.createdAt)
+      : new Date().toISOString(),
+    termsAccepted: resolvedRole === 'candidate',
+  };
+
+  void syncUserProfileToFirestore(profile).catch(() => {});
+  return profile;
 }
 
 function mapResumeGodamDoc(snap: QueryDocumentSnapshot<DocumentData>): JobApplication {
@@ -919,7 +1011,8 @@ export async function createResumeGodamEntryInFirestore(
 }
 
 export function subscribeAdminResumeGodamFromFirestore(
-  onUpdate: (entries: JobApplication[]) => void
+  onUpdate: (entries: JobApplication[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'resume_godam';
   return onSnapshot(
@@ -934,7 +1027,14 @@ export function subscribeAdminResumeGodamFromFirestore(
       onUpdate(sorted);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      reportPrimarySubscriptionError(
+        error,
+        'admin-resume-godam',
+        'Primary Resume Repository',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
@@ -981,10 +1081,33 @@ function logNonFatalFirestoreFailure(
   }
 }
 
+function reportPrimarySubscriptionError(
+  error: unknown,
+  feedKey: string,
+  sourceLabel: string,
+  operationType: OperationType,
+  path: string,
+  onError?: (err: FirestoreSubscriptionError) => void
+): void {
+  logNonFatalFirestoreFailure(error, operationType, path);
+  if (onError) {
+    onError(
+      buildFirestoreSubscriptionError({
+        feedKey,
+        sourceLabel,
+        database: 'primary',
+        operationType,
+        path,
+        error,
+      })
+    );
+  }
+}
+
 export function subscribeDailyVisitorsFromFirestore(
   dateKey: string,
   onUpdate: (count: number) => void,
-  onError?: (error: unknown) => void
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const cleanDateKey = /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
     ? dateKey
@@ -1005,8 +1128,14 @@ export function subscribeDailyVisitorsFromFirestore(
       onUpdate(count);
     },
     (error) => {
-      logNonFatalFirestoreFailure(error, OperationType.GET, path);
-      onError?.(error);
+      reportPrimarySubscriptionError(
+        error,
+        'daily-visitors',
+        'Daily Visitors Counter',
+        OperationType.GET,
+        path,
+        onError
+      );
     }
   );
 }
@@ -1130,7 +1259,7 @@ export function saveCachedVisitorStats(stats: SiteVisitorStats): void {
 
 export function subscribeCumulativeVisitorsFromFirestore(
   onUpdate: (stats: SiteVisitorStats) => void,
-  onError?: (error: unknown) => void
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'site_stats/visitors';
 
@@ -1194,8 +1323,14 @@ export function subscribeCumulativeVisitorsFromFirestore(
       onUpdate(nextStats);
     },
     (error) => {
-      logNonFatalFirestoreFailure(error, OperationType.GET, path);
-      onError?.(error);
+      reportPrimarySubscriptionError(
+        error,
+        'visitor-stats',
+        'Cumulative Visitor Stats',
+        OperationType.GET,
+        path,
+        onError
+      );
     }
   );
 }
@@ -1306,7 +1441,8 @@ export async function recordCumulativeVisitorHitInFirestore(
 }
 
 export function subscribeAdminUsersFromFirestore(
-  onUpdate: (users: CandidateProfile[]) => void
+  onUpdate: (users: CandidateProfile[]) => void,
+  onError?: (error: FirestoreSubscriptionError) => void
 ): Unsubscribe {
   const path = 'users';
   return onSnapshot(
@@ -1346,7 +1482,14 @@ export function subscribeAdminUsersFromFirestore(
       onUpdate(mapped);
     },
     (error) => {
-      logNonFatalFirestoreFailure(error, OperationType.LIST, path);
+      reportPrimarySubscriptionError(
+        error,
+        'admin-users',
+        'Registered Users Directory',
+        OperationType.LIST,
+        path,
+        onError
+      );
     }
   );
 }
